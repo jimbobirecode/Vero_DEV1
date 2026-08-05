@@ -340,6 +340,32 @@
 
   .locked-note{font-size:12px;color:var(--ink-soft);font-style:italic;padding:6px 0 2px;}
 
+  /* ---------- service recovery ---------- */
+  /* The countdown on an alert nobody has called back yet. Colour is the whole
+     signal here, so it escalates rather than sitting at one neutral tone. */
+  .sla-chip{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;text-transform:uppercase;
+    letter-spacing:0.06em;padding:2px 7px;border-radius:20px;white-space:nowrap;vertical-align:middle;}
+  .sla-chip.waiting{background:rgba(0,0,0,0.05);color:var(--ink-soft);}
+  .sla-chip.due{background:var(--amber-soft);color:var(--amber);}
+  .sla-chip.urgent{background:var(--brick-soft);color:var(--brick);}
+  .sla-chip.breached{background:var(--brick);color:#fff;}
+  .sla-chip.contacted{background:var(--sage-soft);color:var(--sage);}
+  .sla-chip.unscheduled{background:rgba(0,0,0,0.05);color:var(--ink-soft);}
+
+  .recovery-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;
+    background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px;}
+  .recovery-strip .stat .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:9.5px;font-weight:500;
+    text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-soft);}
+  .recovery-strip .stat .value{font-family:'Fraunces',serif;font-variation-settings:'opsz' 72,'WONK' 0;
+    font-weight:500;font-size:25px;margin-top:3px;line-height:1;}
+  .recovery-strip .stat .note{font-size:11px;color:var(--ink-soft);margin-top:3px;}
+
+  .outreach-log{margin-top:7px;padding-left:11px;border-left:2px solid var(--line);}
+  .outreach-log .entry{font-size:11.5px;color:var(--ink-soft);margin-bottom:2px;}
+  .outcome-btn{flex:1;min-width:96px;padding:11px 8px;font-size:13px;border:1px solid var(--line);
+    border-radius:7px;background:#fff;color:var(--ink);cursor:pointer;text-align:center;}
+  .outcome-btn.on{background:var(--forest);color:var(--ivory);border-color:var(--forest);}
+
   /* ---------- modal ---------- */
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;display:flex;align-items:center;justify-content:center;}
   .modal-overlay.hidden{display:none;}
@@ -709,8 +735,10 @@
           </div>
         </div>
         <div class="panel-sub">Any response scoring low is flagged the same day it's received — not at month-end review.</div>
+        <div id="recoveryStrip" class="recovery-strip" style="display:none;"></div>
         <div class="filter-tabs" id="alertFilters">
           <div class="filter-tab active" onclick="filterAlertsApi('all', this)">All</div>
+          <div class="filter-tab" onclick="filterAlertsApi('recovery', this)">Awaiting call-back</div>
           <div class="filter-tab" onclick="filterAlertsApi('open', this)">Open</div>
           <div class="filter-tab" onclick="filterAlertsApi('assigned', this)">Assigned</div>
           <div class="filter-tab" onclick="filterAlertsApi('resolved', this)">Resolved</div>
@@ -1225,6 +1253,64 @@
         <div class="modal-actions">
           <button class="btn-secondary" onclick="closeSendSurveyModal()">Cancel</button>
           <button class="btn-primary" id="sendSurveyBtn" onclick="sendManualSurvey()">Send survey</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log a call that already happened. Deliberately not a send-a-message
+         form: the club rings the member, this records that they did. -->
+    <div class="modal-overlay hidden" id="logCallModal" onclick="if(event.target===this)closeLogCall()">
+      <div class="modal">
+        <h3 id="logCallTitle">Log a call</h3>
+        <div class="panel-sub" style="margin-top:-8px;margin-bottom:14px;">
+          This records that contact happened. Nothing is sent to the member.
+        </div>
+        <div class="form-group">
+          <label>What happened</label>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;" id="logCallOutcomes"></div>
+        </div>
+        <div class="form-group" id="logCallSentimentGroup" style="display:none;">
+          <label>How did they sound</label>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;" id="logCallSentiments"></div>
+        </div>
+        <div class="form-group">
+          <label>Channel</label>
+          <select class="field" id="logCallChannel">
+            <option value="phone">Phone</option>
+            <option value="in_person">In person</option>
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+            <option value="letter">Letter</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Note (optional)</label>
+          <textarea class="field" id="logCallNotes" rows="3" placeholder="What was agreed, anything to follow up"></textarea>
+        </div>
+        <div id="logCallResult" style="font-size:12px;margin-top:6px;"></div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeLogCall()">Cancel</button>
+          <button class="btn-primary" id="logCallSave" onclick="saveLogCall()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resolving without ever contacting the member has to be a stated
+         choice rather than the silent default it used to be. -->
+    <div class="modal-overlay hidden" id="noContactModal" onclick="if(event.target===this)closeNoContact()">
+      <div class="modal">
+        <h3>Close without contacting <span id="noContactWho">the member</span>?</h3>
+        <div class="panel-sub" style="margin-top:-8px;margin-bottom:14px;">
+          Nobody has spoken to them about this. If that is right, say why — it keeps
+          the recovery figures honest instead of counting this as handled.
+        </div>
+        <div class="form-group">
+          <label>Reason</label>
+          <select class="field" id="noContactReason"></select>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeNoContact()">Cancel</button>
+          <button class="btn-primary" onclick="confirmNoContact()">Close alert</button>
         </div>
       </div>
     </div>
@@ -2016,6 +2102,8 @@
   }
 
   async function loadAlerts(){
+    loadRecoveryStrip();
+    if(alertsFilter === 'recovery') return loadRecoveryQueue();
     let url = '/alerts?limit=25&offset=' + alertsOffset;
     if(alertsFilter !== 'all') url += '&status=' + alertsFilter;
     const res = await apiCall(url);
@@ -2055,6 +2143,19 @@
       const comment = sr.q5_comment || '';
       const nps = sr.q1_nps != null ? sr.q1_nps : '—';
 
+      // The countdown, and what has already been tried. Without this the list
+      // is a pile of complaints; with it, it is a call sheet.
+      const sla = a.sla_state || slaStateFor(a);
+      const slaLabel = {
+        contacted: 'Called back', breached: (a.remaining_label || 'overdue'),
+        urgent: (a.remaining_label || ''), due: (a.remaining_label || ''),
+        waiting: (a.remaining_label || ''), unscheduled: '',
+      }[sla] || '';
+      const slaHtml = (sla && sla !== 'unscheduled' && a.status !== 'resolved')
+        || sla === 'contacted'
+        ? `<span class="sla-chip ${esc(sla)}">${esc(slaLabel || sla)}</span> `
+        : '';
+
       let actionHtml = '';
       if(a.status === 'open'){
         actionHtml = `<select class="assign-dropdown" onchange="assignAlertFromDropdown('${a.alert_id}', this)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
@@ -2076,6 +2177,9 @@
       const suggestBtn = a.status !== 'resolved'
         ? `<button class="btn-mini" style="margin-left:4px;" onclick="getSuggestedResponse('${a.alert_id}',this)">AI Suggest</button>`
         : '';
+      const logBtn = a.status !== 'resolved'
+        ? `<button class="btn-mini" style="margin-left:4px;background:var(--brass);" onclick="openLogCall('${a.alert_id}','${jsAttr(name)}')">Log call</button>`
+        : '';
 
       // Severity reads as a badge here, matching how status is shown everywhere
       // else in the app, rather than as the raw lowercase word.
@@ -2092,12 +2196,12 @@
         <div class="alert-badge sev-${esc(a.severity || 'high')}">${stars}</div>
         <div class="alert-body" style="flex:1;min-width:0;">
           <div class="top-line">${esc(name)} · ${esc(outletName)}</div>
-          <div class="meta">${sevBadge} <span style="vertical-align:middle;">${esc(metaBits)}</span></div>
+          <div class="meta">${sevBadge} ${slaHtml}<span style="vertical-align:middle;">${esc(metaBits)}</span></div>
           ${summaryHtml}
           ${comment ? `<div class="quote">\u201C${esc(comment)}\u201D</div>` : ''}
           <div class="ai-response-area" id="aiResponse_${a.alert_id}"></div>
         </div>
-        <div class="alert-action">${actionHtml}${suggestBtn}</div>
+        <div class="alert-action">${actionHtml}${logBtn}${suggestBtn}</div>
       </div>`;
     }).join('');
 
@@ -2141,9 +2245,224 @@
     loadAlerts();
   }
 
+  /* ---------- service recovery ---------- */
+  // The member never used to hear back: alerts ran open -> assigned ->
+  // resolved and every one of those describes what staff did internally.
+  // Nothing here messages the member — the club rings them, and this records
+  // that it happened, times it, and reports on it.
+
+  let recoveryMeta = { outcomes: [], sentiments: [], no_contact_reasons: {} };
+
+  // Local fallback for the plain /alerts list, which doesn't compute the
+  // clock server-side. Keep the thresholds identical to lib/recovery.js.
+  function slaStateFor(a){
+    if(a.first_contact_at) return 'contacted';
+    if(!a.contact_due_at || !a.created_at) return 'unscheduled';
+    const created = new Date(a.created_at).getTime();
+    const due = new Date(a.contact_due_at).getTime();
+    const pct = (Date.now() - created) / Math.max(due - created, 1);
+    if(Date.now() > due) return 'breached';
+    if(pct >= 0.9) return 'urgent';
+    if(pct >= 0.5) return 'due';
+    return 'waiting';
+  }
+
+  async function loadRecoveryStrip(){
+    const strip = document.getElementById('recoveryStrip');
+    const res = await apiCall('/alerts/recovery-stats?days=90');
+    if(!res || !res.ok){ strip.style.display = 'none'; return; }
+    const m = await res.json();
+
+    // Three numbers, and each one says plainly when it has nothing to report
+    // rather than showing a zero that reads like a failure.
+    const pct = (v) => v == null ? '—' : v + '%';
+    const stats = [
+      { eyebrow: 'Called back in time', value: pct(m.pct_contacted_within_sla),
+        note: m.alerts_in_scope ? `${m.contacted_within_sla} of ${m.alerts_in_scope - m.excluded_no_contact} alerts · 90 days` : 'No alerts yet' },
+      { eyebrow: 'Median time to call', value: m.median_hours_to_contact == null ? '—' : m.median_hours_to_contact + 'h',
+        note: m.contacted ? `across ${m.contacted} call${m.contacted===1?'':'s'}` : 'nobody called back yet' },
+      { eyebrow: 'Rated us higher after', value: pct(m.pct_recovered),
+        note: m.recovery_measurable ? `${m.recovery_improved} of ${m.recovery_measurable} who returned` : 'none have returned yet' },
+      { eyebrow: 'Waiting on a call', value: String(m.awaiting_contact ?? 0),
+        note: m.breached ? `${m.breached} past the window` : 'all inside the window' },
+    ];
+    strip.innerHTML = stats.map(st =>
+      `<div class="stat"><div class="eyebrow">${esc(st.eyebrow)}</div>` +
+      `<div class="value">${esc(st.value)}</div><div class="note">${esc(st.note)}</div></div>`).join('');
+    strip.style.display = '';
+  }
+
+  // The call sheet: who is closest to being let down, most urgent first.
+  async function loadRecoveryQueue(){
+    const container = document.getElementById('alertsContainer');
+    const res = await apiCall('/alerts/recovery-queue');
+    if(!res){ container.innerHTML = '<div style="text-align:center;color:var(--ink-soft);padding:20px;">No backend connected.</div>'; return; }
+    const data = await res.json();
+    if(!res.ok){
+      container.innerHTML = `<div style="text-align:center;color:var(--brick);padding:20px;">${esc(data.error || 'Could not load the recovery queue.')}</div>`;
+      return;
+    }
+
+    recoveryMeta = {
+      outcomes: data.outcomes || [], sentiments: data.sentiments || [],
+      no_contact_reasons: data.no_contact_reasons || {},
+    };
+
+    const q = data.queue || [];
+    document.getElementById('alertsCount').textContent =
+      `${q.length} member${q.length===1?'':'s'} awaiting a call-back`;
+    document.getElementById('alertsPrev').style.display = 'none';
+    document.getElementById('alertsNext').style.display = 'none';
+
+    if(!q.length){
+      container.innerHTML = '<div style="text-align:center;color:var(--sage);padding:20px;">Everyone has been called back.</div>';
+      return;
+    }
+
+    container.innerHTML = q.map(a => {
+      const stars = a.alert_stars != null ? a.alert_stars + '★' : '—';
+      const name = a.member_name || 'Unknown member';
+      const sevClass = { high:'critical', medium:'watch', low:'maintain' }[a.severity] || 'watch';
+      const chip = `<span class="sla-chip ${esc(a.sla_state)}">${esc(a.remaining_label || a.sla_state)}</span>`;
+      // A member with no phone and no email cannot be rung, however urgent the
+      // alert is. Saying so turns an impossible task into a decision.
+      const reach = a.contactable
+        ? `<span class="mono" style="font-size:11px;">${esc(a.member_phone || a.member_email)}</span>`
+        : `<span style="color:var(--brick);font-size:11.5px;">No phone or email on file</span>`;
+      const tried = a.outreach_count
+        ? `<div class="outreach-log"><div class="entry">${a.outreach_count} attempt${a.outreach_count===1?'':'s'} so far</div></div>`
+        : '';
+
+      return `<div class="alert-item">
+        <div class="alert-badge sev-${esc(a.severity || 'high')}">${esc(stars)}</div>
+        <div class="alert-body" style="flex:1;min-width:0;">
+          <div class="top-line">${esc(name)}${a.outlet_name ? ' · ' + esc(a.outlet_name) : ''}</div>
+          <div class="meta"><span class="badge ${sevClass}"><span class="dot"></span>${esc(a.severity||'')}</span> ${chip} ${reach}</div>
+          ${a.comment ? `<div class="quote">“${esc(a.comment)}”</div>` : ''}
+          ${tried}
+        </div>
+        <div class="alert-action">
+          <button class="btn-mini" style="background:var(--brass);" onclick="openLogCall('${a.alert_id}','${jsAttr(name)}')">Log call</button>
+          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}')">Resolve</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  let logCallState = { alertId: null, outcome: null, sentiment: null };
+
+  async function openLogCall(alertId, memberName){
+    logCallState = { alertId, outcome: null, sentiment: null };
+    document.getElementById('logCallTitle').textContent =
+      memberName && memberName !== 'Unknown member' ? `Log a call with ${memberName}` : 'Log a call';
+    document.getElementById('logCallResult').textContent = '';
+    document.getElementById('logCallNotes').value = '';
+    document.getElementById('logCallChannel').value = 'phone';
+    document.getElementById('logCallSentimentGroup').style.display = 'none';
+
+    const OUTCOME_LABELS = {
+      reached: 'Spoke to them', left_message: 'Left a message', no_answer: 'No answer',
+      declined: 'Declined to talk', wrong_number: 'Wrong number',
+    };
+    const SENTIMENT_LABELS = { recovered: 'Happy again', neutral: 'Neutral', still_unhappy: 'Still unhappy' };
+    const outcomes = recoveryMeta.outcomes.length ? recoveryMeta.outcomes : Object.keys(OUTCOME_LABELS);
+    const sentiments = recoveryMeta.sentiments.length ? recoveryMeta.sentiments : Object.keys(SENTIMENT_LABELS);
+
+    document.getElementById('logCallOutcomes').innerHTML = outcomes.map(o =>
+      `<button type="button" class="outcome-btn" data-outcome="${esc(o)}" onclick="pickOutcome('${jsAttr(o)}')">${esc(OUTCOME_LABELS[o] || o)}</button>`).join('');
+    document.getElementById('logCallSentiments').innerHTML = sentiments.map(sn =>
+      `<button type="button" class="outcome-btn" data-sentiment="${esc(sn)}" onclick="pickSentiment('${jsAttr(sn)}')">${esc(SENTIMENT_LABELS[sn] || sn)}</button>`).join('');
+
+    document.getElementById('logCallModal').classList.remove('hidden');
+  }
+
+  function pickOutcome(o){
+    logCallState.outcome = o;
+    document.querySelectorAll('#logCallOutcomes .outcome-btn').forEach(b =>
+      b.classList.toggle('on', b.dataset.outcome === o));
+    // Only a call that connected can carry a read on how they sounded.
+    const connected = o === 'reached';
+    document.getElementById('logCallSentimentGroup').style.display = connected ? '' : 'none';
+    if(!connected){
+      logCallState.sentiment = null;
+      document.querySelectorAll('#logCallSentiments .outcome-btn').forEach(b => b.classList.remove('on'));
+    }
+  }
+
+  function pickSentiment(sn){
+    logCallState.sentiment = sn;
+    document.querySelectorAll('#logCallSentiments .outcome-btn').forEach(b =>
+      b.classList.toggle('on', b.dataset.sentiment === sn));
+  }
+
+  function closeLogCall(){ document.getElementById('logCallModal').classList.add('hidden'); }
+
+  async function saveLogCall(){
+    const result = document.getElementById('logCallResult');
+    if(!logCallState.outcome){
+      result.textContent = 'Pick what happened first.';
+      result.style.color = 'var(--brick)';
+      return;
+    }
+    const btn = document.getElementById('logCallSave');
+    btn.disabled = true;
+
+    const res = await apiCall('/alerts/' + logCallState.alertId + '/outreach', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        channel: document.getElementById('logCallChannel').value,
+        outcome: logCallState.outcome,
+        member_sentiment: logCallState.sentiment || undefined,
+        notes: document.getElementById('logCallNotes').value || undefined,
+      }),
+    });
+    btn.disabled = false;
+
+    const data = res ? await res.json() : {};
+    if(!res || !res.ok){
+      result.textContent = data.error || 'Could not save that.';
+      result.style.color = 'var(--brick)';
+      return;
+    }
+    closeLogCall();
+    refreshAlertsView();
+  }
+
+  let noContactState = { alertId: null };
+
+  function closeNoContact(){ document.getElementById('noContactModal').classList.add('hidden'); }
+
+  async function confirmNoContact(){
+    const reason = document.getElementById('noContactReason').value;
+    await apiCall('/alerts/' + noContactState.alertId + '/resolve', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ no_contact_reason: reason }),
+    });
+    closeNoContact();
+    refreshAlertsView();
+  }
+
+  function refreshAlertsView(){
+    loadRecoveryStrip();
+    if(alertsFilter === 'recovery') loadRecoveryQueue(); else loadAlerts();
+  }
+
   async function resolveAlert(id){
-    await apiCall('/alerts/' + id + '/resolve', { method: 'PUT' });
-    loadAlerts();
+    const res = await apiCall('/alerts/' + id + '/resolve', { method: 'PUT' });
+    // 409 means nobody has closed this back to the member. Rather than
+    // refusing outright — which just teaches people to log a call that never
+    // happened — ask why, and record the answer.
+    if(res && res.status === 409){
+      const data = await res.json();
+      noContactState = { alertId: id };
+      document.getElementById('noContactWho').textContent = data.member_name || 'the member';
+      const sel = document.getElementById('noContactReason');
+      sel.innerHTML = Object.entries(data.reasons || {})
+        .map(([k, label]) => `<option value="${esc(k)}">${esc(label)}</option>`).join('');
+      document.getElementById('noContactModal').classList.remove('hidden');
+      return;
+    }
+    refreshAlertsView();
   }
 
   async function reopenAlert(id){

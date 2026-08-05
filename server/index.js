@@ -101,6 +101,12 @@ app.use("/api/staff-survey-response", rateLimit({ windowMs: 15 * 60_000, max: 40
 // they already hold is stop their own mail.
 app.use("/u", express.urlencoded({ extended: false }), rateLimit({ windowMs: 15 * 60_000, max: 500 }), require("./routes/unsubscribe"));
 
+// One-tap call logging, reached from the link in an alert escalation email.
+// Staff-facing rather than member-facing, so the ceiling is modest — a club
+// logs a handful of these a day, and nothing here is a mail-provider target
+// the way the unsubscribe endpoint is.
+app.use("/c", express.urlencoded({ extended: false }), rateLimit({ windowMs: 15 * 60_000, max: 120 }), require("./routes/recovery-log"));
+
 // --- Cron routes (protected by cron secret, not user auth) ---
 app.use("/api/cron", requireCronSecret, require("./routes/surveys"));         // send-surveys
 app.use("/api/cron", requireCronSecret, require("./routes/analyze"));         // analyze-weekly

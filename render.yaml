@@ -88,3 +88,27 @@ services:
           type: web
           name: vero
           envVarKey: CRON_SECRET
+
+  # Hourly: nudge on alerts where nobody has called the member back yet.
+  #
+  # A promise measured in hours cannot be policed by a daily job — an alert
+  # raised at 10am with a 24-hour window would get its first and only nudge
+  # after it had already expired. The sweep itself decides what is owed and
+  # sends each stage once, so running it hourly is cheap and idempotent.
+  - type: cron
+    name: vero-recovery-sweep
+    runtime: node
+    plan: starter
+    schedule: "5 * * * *"    # every hour at :05
+    buildCommand: npm install
+    startCommand: >
+      curl -X POST "$SURVEY_BASE_URL/api/cron/recovery-sweep"
+      -H "x-cron-secret: $CRON_SECRET"
+    envVars:
+      - key: SURVEY_BASE_URL
+        sync: false
+      - key: CRON_SECRET
+        fromService:
+          type: web
+          name: vero
+          envVarKey: CRON_SECRET
