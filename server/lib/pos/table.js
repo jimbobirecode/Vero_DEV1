@@ -59,7 +59,11 @@ function dataRows(doc, header) {
 
 // Rows that are a report's own subtotal, grand total, page furniture or
 // footnote. Left in, they become phantom visits with a huge spend.
-const SUMMARY_RE = /^(sub\s*)?total\b|^grand\s+total|^report\s+total|^department\s+total|^location\s+total|total\s+for\b|^page\s+\d|^printed\b|^\s*[-=_*]{3,}\s*$|^note\s*:|^copyright|^©/i;
+// Every vendor labels its subtotals differently — "Department Total" in Jonas,
+// "Section Total" in Club V1, "Total for:" in NorthStar — so rather than
+// listing them, match anything that *ends* in Total or Totals. That catches
+// the next vendor's wording too, and cannot match a member or an outlet.
+const SUMMARY_RE = /^(sub\s*)?total\b|^[A-Za-z][A-Za-z ]*\s+totals?$|total\s+for\b|^page\s+\d|^printed\b|^\s*[-=_*]{3,}\s*$|^note\s*:|^copyright|^©/i;
 
 function isSummaryRow(cells) {
   const filled = cells.filter((c) => String(c ?? "").trim());

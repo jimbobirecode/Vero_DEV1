@@ -1259,7 +1259,7 @@
         <div class="dropzone" onclick="document.getElementById('posFileInput').click()" id="posDropzone">
           <div class="icon">⬆</div>
           <div class="txt1">Drop your POS export here, or click to browse</div>
-          <div class="txt2">PDF, CSV or Excel · NorthStar, Jonas and Lightspeed exports are read as they come out of the POS</div>
+          <div class="txt2">PDF, CSV or Excel · NorthStar, Jonas, Lightspeed and Club V1 exports are read as they come out of the POS</div>
         </div>
         <div style="margin-top:8px;">
           <button class="btn-secondary" onclick="downloadPosTemplate()">Download CSV template</button>
@@ -4871,7 +4871,7 @@
     },
     upload: {
       title: 'How Upload works',
-      text: 'This is where data enters the system. Upload your daily POS export exactly as it comes out of the POS — PDF, CSV or Excel — and the system works out which POS produced it, parses it, matches member numbers, checks spend against outlet thresholds, and queues surveys automatically. NorthStar, Jonas and Lightspeed exports are read directly; anything else is read by column name, and you can pick the POS from the dropdown if an export carries no branding. Several checks by the same member at the same outlet on the same day are combined into one visit, and spend is taken net of tax and gratuity so an auto-added 18% cannot push a check over your threshold. For golf, upload the tee sheet as a PDF — golf surveys are sent immediately. After upload, the nightly cron checks each visit and sends surveys to qualifying members.'
+      text: 'This is where data enters the system. Upload your daily POS export exactly as it comes out of the POS — PDF, CSV or Excel — and the system works out which POS produced it, parses it, matches member numbers, checks spend against outlet thresholds, and queues surveys automatically. NorthStar, Jonas, Lightspeed and Club V1 exports are read directly; anything else is read by column name, and you can pick the POS from the dropdown if an export carries no branding. Several checks by the same member at the same outlet on the same day are combined into one visit, and spend is taken net of tax and gratuity so an auto-added 18% cannot push a check over your threshold. For golf, upload the tee sheet as a PDF — golf surveys are sent immediately. After upload, the nightly cron checks each visit and sends surveys to qualifying members.'
     },
     builder: {
       title: 'How Survey Builder works',

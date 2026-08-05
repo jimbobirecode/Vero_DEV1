@@ -10,6 +10,7 @@ which module should read it.
 | `northstar` | NorthStar | PDF | The "Sales By Location" / "Daily Sales By Location" report title |
 | `jonas` | Jonas Club Software (Club Management / Encore) | PDF, CSV, TSV, Excel | The Jonas name, report titles like "Member Charge Detail", "Revenue Centre" / "Chit #" vocabulary, or the account + department + amount column shape |
 | `lightspeed` | Lightspeed Restaurant (K/L-Series) and Lightspeed Golf (Chronogolf) | PDF, CSV, TSV, Excel | The Lightspeed or Chronogolf name, the "Total excl./incl. tax" pair, or "Receipt number" alongside "Shop" |
+| `clubv1` | Club V1 (Club Systems) | PDF, CSV, TSV, Excel | The Club V1 or Club Systems name, report titles like "Till Sales", or "Section"/"Till" alongside VAT and a Net or Gross column |
 | `generic` | anything else | PDF, CSV, TSV, Excel | Always scores 0.01, so it reads any export no vendor module claimed |
 
 ## How a file is read
@@ -56,6 +57,15 @@ silently changes who gets surveyed.
 phone or email, so a member number the club does not have can never be
 surveyed. Queueing it would put a permanently unsendable row in the queue.
 
+**Dates follow the vendor's country, not ours.** Club V1 is a UK product, so
+its module defaults to DD/MM/YYYY; Lightspeed is sold worldwide, so its module
+reads the locale off the column before parsing. This is the failure mode worth
+worrying about most: read the wrong way round, 07/08 becomes 7 August instead
+of 8 July, and every date in the file still parses, so nothing looks broken.
+Both modules only leave their default on positive evidence — a value above 12
+in a position that settles it — and the parse summary reports `date_order` so
+you can see which way a file was read.
+
 **An ambiguous name is not matched.** Where a member is identified by name only
 — routine on Lightspeed, where the customer record is optional at the till —
 two members sharing that name means no match. Surveying the wrong one is worse
@@ -77,7 +87,8 @@ A module is a dictionary and a detector. Copy `jonas.js`, then:
    `variant` (a label suffix), `prepare` (anything that needs the whole column
    before parsing — return settings, never store them on the profile, which is
    a module singleton shared by every in-flight upload), and `refineRow`.
-4. Add it to `MODULES` in `index.js`, ahead of `generic`.
+4. Add it to `MODULES` in `index.js`, ahead of `generic`. Set `fileTypes` if
+   the vendor only ever exports one shape.
 5. Add a fixture to `pos-modules.test.js`, including the vendor's awkward
    shapes: the title block above the header, names carrying commas, subtotal
    rows, a void, and whatever it does with dates.
