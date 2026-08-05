@@ -4,6 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Club Vero — Member Experience Intelligence</title>
+
+<!-- Club Vero brand assets (docs/Club-Vero-Brand-Sheet.pdf). Served from this
+     origin, which is what the CSP img-src 'self' allows. -->
+<link rel="icon" href="/assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/assets/clubvero-favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#16302A">
+<meta property="og:title" content="Club Vero — The truth behind every visit">
+<meta property="og:description" content="Member experience intelligence for private golf and country clubs.">
+<meta property="og:image" content="/assets/clubvero-og-1200x630.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <!-- Brand identity v1.0: Fraunces (display, WONK axis requested so it can be
      turned off), Inter at 400/500 only, IBM Plex Mono for eyebrows and data. -->
@@ -57,16 +73,13 @@
      that is the intended failure mode, not a bug to fix. The mark's ink is
      inherited so the reversed lockup works on the forest rail, but the brass
      segment is fixed and must never be recoloured. */
-  .vero-mark{display:block;height:1em;width:auto;flex-shrink:0;}
-  .vero-mark .seg{stroke:currentColor;}
-  .vero-mark .seg-rise{stroke:var(--brass);}
 
   /* ---------- login screen ---------- */
   .login-overlay{position:fixed;inset:0;z-index:9999;background:var(--forest);display:flex;align-items:center;justify-content:center;}
   .login-card{background:var(--card);border-radius:16px;padding:48px 40px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.3);}
   .login-card .login-brand{text-align:center;margin-bottom:28px;display:flex;flex-direction:column;align-items:center;}
   /* Clear space on all sides equals half the mark height (0.5x). */
-  .login-card .login-brand .vero-mark{height:58px;color:var(--forest);margin-bottom:29px;}
+  .login-card .login-brand .mark{display:block;margin:0 auto;width:220px;max-width:100%;height:auto;}
   .login-card .login-brand .mark{font-size:32px;color:var(--forest);line-height:1;}
   .login-card .login-brand .sub{font-size:13px;color:var(--ink-soft);margin-top:6px;}
   .login-card label{display:block;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.8px;color:var(--ink-soft);margin-bottom:4px;}
@@ -87,7 +100,7 @@
   .brand .rule{width:1px;align-self:stretch;background:rgba(245,242,234,0.28);margin:1px 0;}
   /* Reversed lockup: the mark's ink follows the rail's ivory, the brass
      segment stays brass — it is the one part that is never recoloured. */
-  .brand .vero-mark{height:31px;color:var(--ivory);}
+  .brand .mark{display:block;width:176px;max-width:100%;height:auto;}
   .brand .mark{font-size:23px;letter-spacing:0.2px;line-height:1;}
   .brand-line{font-size:11.5px;color:rgba(245,242,234,0.6);margin-top:5px;}
   .club-picker{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 11px;}
@@ -427,31 +440,18 @@
 </style>
 </head>
 <body>
-<!-- The mark's seam mask, defined once and referenced by every instance of the
-     lockup. The mask coordinates are in the mark's own user space, so every
-     mark must keep the 0 0 106 100 viewBox. -->
-<svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden;"><defs>
-  <mask id="veroSeams" maskUnits="userSpaceOnUse" x="0" y="0" width="106" height="100">
-    <rect width="106" height="100" fill="#fff"/>
-    <g stroke="#000" stroke-width="4.2" stroke-linecap="butt">
-      <line x1="17.7" y1="78.1" x2="43.1" y2="52.7"/>
-      <line x1="62.2" y1="22.2" x2="90.0" y2="45.2"/>
-    </g>
-  </mask>
-</defs></svg>
 
 <!-- Login screen -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-card">
     <div class="login-brand">
-      <svg class="vero-mark" viewBox="0 0 106 100" fill="none" aria-hidden="true">
-        <g mask="url(#veroSeams)" stroke-width="22" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="6">
-          <path class="seg" d="M12 47 L41 76 L76.1 33.7"/>
-          <path class="seg-rise" d="M76.1 33.7 L94 12"/>
-        </g>
-      </svg>
-      <div class="mark display">Club Vero</div>
-      <div class="sub tagline">The truth behind every visit</div>
+      <!-- The official horizontal lockup from the design pack. It replaces a
+           hand-drawn approximation of the mark and a wordmark set in live
+           Fraunces: the brand sheet says not to redraw the mark, and ships
+           the wordmark as outlines precisely so the font need not load. The
+           lockup carries the tagline, so no separate line is needed. -->
+      <img class="mark" src="/assets/clubvero-logo-horizontal.svg"
+           alt="Club Vero — The truth behind every visit" width="220" height="53">
     </div>
     <div class="form-group">
       <label>Email</label>
@@ -480,16 +480,9 @@
   <aside class="rail">
     <div>
       <div class="brand">
-        <svg class="vero-mark" viewBox="0 0 106 100" fill="none" aria-hidden="true">
-          <g mask="url(#veroSeams)" stroke-width="22" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="6">
-            <path class="seg" d="M12 47 L41 76 L76.1 33.7"/>
-            <path class="seg-rise" d="M76.1 33.7 L94 12"/>
-          </g>
-        </svg>
-        <span class="rule"></span>
-        <span class="mark display">Club Vero</span>
+        <img class="mark" src="/assets/clubvero-logo-horizontal-reversed.svg"
+             alt="Club Vero — The truth behind every visit" width="176" height="42">
       </div>
-      <div class="brand-line tagline">The truth behind every visit</div>
     </div>
 
     <div class="club-picker">

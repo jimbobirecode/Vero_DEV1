@@ -11,12 +11,15 @@ const { CLUB_NAME } = require("../lib/club-config");
 // it — so the link genuinely works rather than only appearing to.
 
 function page(title, body, tone = "ok") {
-  const colour = tone === "ok" ? "#1f4d3a" : "#b04a34";
+  const colour = tone === "ok" ? "#16302A" : "#9C4A34";   // Club Vero forest / brick
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title></head>
-<body style="margin:0;background:#f2f4f1;font-family:Arial,Helvetica,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+<link rel="icon" href="/assets/favicon.ico" sizes="any">
+<meta name="theme-color" content="#16302A">
+<body style="margin:0;background:#F5F2EA;font-family:Arial,Helvetica,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
 <div style="background:#fff;border-radius:8px;max-width:440px;width:100%;padding:32px;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+  <img src="/assets/clubvero-logo-horizontal.svg" alt="Club Vero" width="132" height="32" style="display:block;width:132px;height:auto;margin-bottom:14px;">
   <div style="font-size:13px;color:#6b6b6b;margin-bottom:6px;">${CLUB_NAME}</div>
   <h1 style="margin:0 0 12px;font-size:20px;color:${colour};">${title}</h1>
   <p style="margin:0;font-size:15px;line-height:1.55;color:#3a3a3a;">${body}</p>
@@ -45,7 +48,7 @@ router.get("/:token", async (req, res) => {
 
   res.send(page("Stop receiving feedback requests?",
     `<form method="POST" action="/u/${encodeURIComponent(req.params.token)}" style="margin:18px 0 0;">
-       <button type="submit" style="background:#1f4d3a;color:#fff;border:0;border-radius:6px;padding:13px 26px;font-size:15px;font-weight:bold;cursor:pointer;">
+       <button type="submit" style="background:#16302A;color:#F5F2EA;border:0;border-radius:6px;padding:13px 26px;font-size:15px;font-weight:bold;cursor:pointer;">
          Yes, unsubscribe me
        </button>
      </form>
