@@ -198,6 +198,13 @@ function recoveryMetrics(alerts = [], followUps = new Map(), now = Date.now()) {
   const contacted = contactable.filter((a) => a.first_contact_at);
   const withinSla = contacted.filter((a) => slaState(a, now).met === true);
 
+  // An alert still inside its window has not been missed — it can yet be
+  // called. Only alerts whose window has closed one way or the other are
+  // scored, or the headline drops every time a new alert arrives, which would
+  // punish a club for having a busy Saturday.
+  const decided = contactable.filter(
+    (a) => a.first_contact_at || slaState(a, now).state === "breached");
+
   const timesToContact = contacted
     .map((a) => new Date(a.first_contact_at).getTime() - new Date(a.created_at).getTime())
     .filter((ms) => Number.isFinite(ms) && ms >= 0);
@@ -223,8 +230,12 @@ function recoveryMetrics(alerts = [], followUps = new Map(), now = Date.now()) {
     excluded_no_contact: inScope.length - contactable.length,
     contacted: contacted.length,
     contacted_within_sla: withinSla.length,
-    pct_contacted_within_sla: pct(withinSla.length, contactable.length),
-    pct_contacted: pct(contacted.length, contactable.length),
+    // Scored against alerts whose window has closed, not against every alert
+    // on the books — see `decided` above.
+    decided: decided.length,
+    still_in_window: contactable.length - decided.length,
+    pct_contacted_within_sla: pct(withinSla.length, decided.length),
+    pct_contacted: pct(contacted.length, decided.length),
     median_ms_to_contact: median(timesToContact),
     median_hours_to_contact: timesToContact.length
       ? Math.round((median(timesToContact) / 3600000) * 10) / 10

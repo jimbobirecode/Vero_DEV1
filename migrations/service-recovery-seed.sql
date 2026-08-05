@@ -14,8 +14,20 @@
 -- Idempotent: re-running deletes everything it previously inserted and starts
 -- again. It only ever touches rows it created, identified by the DEMO_ member
 -- ids and the demo-recovery- survey tokens. Teardown is at the bottom.
+--
+-- The whole file is two statements: the DO block, and a query that reports
+-- what it produced. Paste it all into the Supabase SQL editor and run it.
+-- Verified on Postgres 16 — whole file, re-run for idempotency, and each
+-- statement replayed on its own connection.
 
-begin;
+-- Everything that builds the demo runs inside one DO block, which Postgres
+-- executes as a single statement. Earlier versions of this file used separate
+-- statements and a staging table, and the SQL editor kept losing the table
+-- between them — it commits each statement on its own, and a pooled
+-- connection can put each on a different session. One statement cannot be
+-- split, cannot be half-committed, and cannot lose its own temp tables.
+do $seed$
+begin
 
 -- ---------------------------------------------------------------- teardown --
 delete from alert_outreach where alert_id in (
@@ -57,7 +69,7 @@ insert into members (member_id, first_name, last_name, phone_number, email_addre
 --                   would contradict the rules the dashboard applies.
 --   follow_up_nps   their score on a later visit; null = not been back yet
 --   no_contact      a stated reason for closing without ever contacting them
-create temp table demo_cases (
+create temp table demo_recovery_cases (
   member_id text, outlet_name text, severity text, hours_ago numeric,
   nps smallint, overall smallint, food smallint, service smallint, comment text,
   assigned_to text, contact_hours numeric, reached boolean, sentiment text,
@@ -65,7 +77,7 @@ create temp table demo_cases (
   no_contact text, resolved boolean
 ) on commit drop;
 
-insert into demo_cases values
+insert into demo_recovery_cases values
 -- ===== LIVE QUEUE — what the GM is looking at right now ====================
 -- Overdue: the window closed six hours ago and nobody has rung him.
 ('DEMO_1042','Belmont Dining Room','high',   30, 2,1,1,2,
@@ -117,8 +129,10 @@ insert into demo_cases values
  'Tom Reyes',    5.0, false, null,           'Left a voicemail asking her to call back.',                  true,  null, null, false),
 
 -- ===== CALLED BACK TOO LATE ===============================================
--- Counts as contacted, but not as contacted in time.
-('DEMO_2318','Belmont Poolside','medium',   16*24, 4,2,2,2,
+-- Counts as contacted, but not as contacted in time. Has to be high severity
+-- to tell that story: a medium alert has a 72-hour window, so a call at 38
+-- hours would be comfortably inside it.
+('DEMO_2318','Belmont Poolside','high',     16*24, 4,2,2,2,
  'Pool bar closed early with no notice, twice in a week.',
  'Priya Anand', 38.0, true,  'neutral',      'Late call. Fair about it, but he had already told friends.', false,  6, null, true),
 
@@ -137,7 +151,7 @@ insert into demo_cases values
 -- particular has to come from the alert's own window, not from a raw hour
 -- count: a medium alert 40 hours old is halfway through a 72-hour window, not
 -- overdue.
-create temp table demo_alerts on commit drop as
+create temp table demo_recovery_alerts on commit drop as
 select c.*,
        o.outlet_id,
        (now() - make_interval(hours => c.hours_ago::int)) as created_at,
@@ -149,11 +163,11 @@ select c.*,
              case c.severity when 'high' then 1440 when 'medium' then 4320 else 10080 end)) as due_at,
        case when c.contact_hours is not null
             then now() - make_interval(hours => (c.hours_ago - c.contact_hours)::int) end as contact_at
-  from demo_cases c
+  from demo_recovery_cases c
   join outlets o on lower(o.name) = lower(c.outlet_name);
 
-alter table demo_alerts add column stage text;
-update demo_alerts set stage =
+alter table demo_recovery_alerts add column stage text;
+update demo_recovery_alerts set stage =
   case when contact_at is null and no_contact is null and not resolved then
     case when now() >  due_at                                        then 'breached'
          when now() >= created_at + (due_at - created_at) * 0.9      then 'final'
@@ -167,13 +181,13 @@ select a.member_id, a.outlet_id, a.visit_date,
        (60 + (random() * 90))::numeric(10,2),
        (array['Ava Del Viscio','Sabrina Swope','Priyanka','Patrick McDermott'])[1 + floor(random() * 4)::int],
        'member', true, a.created_at - interval '2 hours'
-  from demo_alerts a;
+  from demo_recovery_alerts a;
 
 -- --------------------------------------------------------------- responses --
 insert into survey_responses (visit_id, survey_token, q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, is_complete)
 select v.visit_id, 'demo-recovery-' || v.visit_id,
        a.nps, a.overall, a.food, a.service, a.comment, a.created_at, true
-  from demo_alerts a
+  from demo_recovery_alerts a
   join visits v on v.member_id = a.member_id
                and v.outlet_id = a.outlet_id
                and v.visit_date = a.visit_date
@@ -200,7 +214,7 @@ select sr.response_id, a.outlet_id, a.severity,
        left(a.comment, 90),                                 -- stands in for the AI summary
        a.stage,
        case when a.stage is not null then now() - interval '1 hour' end
-  from demo_alerts a
+  from demo_recovery_alerts a
   join visits v on v.member_id = a.member_id and v.outlet_id = a.outlet_id and v.visit_date = a.visit_date
   join survey_responses sr on sr.visit_id = v.visit_id
   left join staff st on st.name = a.assigned_to;
@@ -213,7 +227,7 @@ insert into alert_outreach (alert_id, member_id, channel, outcome, occurred_at, 
 select ca.alert_id, a.member_id, 'phone', 'wrong_number',
        a.created_at + interval '40 minutes',
        coalesce(a.assigned_to, 'Sarah Kim'), 'dashboard'
-  from demo_alerts a
+  from demo_recovery_alerts a
   join visits v on v.member_id = a.member_id and v.outlet_id = a.outlet_id and v.visit_date = a.visit_date
   join survey_responses sr on sr.visit_id = v.visit_id
   join case_alerts ca on ca.response_id = sr.response_id
@@ -227,7 +241,7 @@ select ca.alert_id, a.member_id, 'phone',
        a.sentiment, a.call_note, a.contact_at,
        st.staff_id, coalesce(a.assigned_to, 'Sarah Kim'),
        case when a.contact_hours < 6 then 'one_tap' else 'dashboard' end
-  from demo_alerts a
+  from demo_recovery_alerts a
   join visits v on v.member_id = a.member_id and v.outlet_id = a.outlet_id and v.visit_date = a.visit_date
   join survey_responses sr on sr.visit_id = v.visit_id
   join case_alerts ca on ca.response_id = sr.response_id
@@ -243,7 +257,7 @@ select a.member_id, a.outlet_id,
        (a.contact_at + interval '7 days')::date,
        (70 + (random() * 80))::numeric(10,2), 'member', true,
        a.contact_at + interval '7 days'
-  from demo_alerts a
+  from demo_recovery_alerts a
  where a.follow_up_nps is not null
    and a.contact_at + interval '7 days' < now();
 
@@ -257,7 +271,7 @@ select v.visit_id, 'demo-recovery-followup-' || v.visit_id,
             then 'Much better this time — thank you for calling me personally.'
             else 'Better, but still not quite there.' end,
        a.contact_at + interval '7 days 3 hours', true
-  from demo_alerts a
+  from demo_recovery_alerts a
   join visits v on v.member_id = a.member_id
                and v.outlet_id = a.outlet_id
                and v.visit_date = (a.contact_at + interval '7 days')::date
@@ -265,7 +279,9 @@ select v.visit_id, 'demo-recovery-followup-' || v.visit_id,
    and a.contact_at + interval '7 days' < now()
    and not exists (select 1 from survey_responses s where s.visit_id = v.visit_id);
 
-commit;
+
+end
+$seed$;
 
 -- ------------------------------------------------------------------ check --
 -- Run this after seeding. It should show 4 awaiting a call, 1 breached,

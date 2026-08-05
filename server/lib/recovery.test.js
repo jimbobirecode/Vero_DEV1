@@ -163,6 +163,21 @@ check("recovery is measured only for members actually spoken to", metrics.recove
 check("recovered count", metrics.recovery_improved, 1);
 check("recovery rate", metrics.pct_recovered, 50);
 
+// An alert still inside its window has not been missed — it can yet be called.
+// Counting it against the club would drop the headline every time a new alert
+// arrived, which punishes them for having a busy Saturday.
+const busy = R.recoveryMetrics([
+  // called in time
+  alert({ alert_id: "b1", member_id: "M1", first_contact_at: iso(T0 + 2 * H) }),
+  // raised an hour ago, 23 hours still to run
+  alert({ alert_id: "b2", member_id: "M2", created_at: iso(T0 + 99 * H), contact_due_at: iso(T0 + 123 * H) }),
+  alert({ alert_id: "b3", member_id: "M3", created_at: iso(T0 + 99 * H), contact_due_at: iso(T0 + 123 * H) }),
+], new Map(), NOW);
+check("only alerts whose window has closed are scored", busy.decided, 1);
+check("fresh alerts are reported separately", busy.still_in_window, 2);
+check("a busy day does not drag the headline down", busy.pct_contacted_within_sla, 100);
+check("but they are still shown as awaiting a call", busy.awaiting_contact, 2);
+
 // Nobody has come back yet: that is not a 0% recovery rate.
 const early = R.recoveryMetrics(
   [alert({ member_id: "M9", first_contact_at: iso(T0 + H), first_reached_at: iso(T0 + H), alert_nps: 2 })],

@@ -90,7 +90,11 @@ not good enough, not that the call never happened.
 
 `GET /api/alerts/recovery-stats?days=90`
 
-- **% contacted within the window** — the promise.
+- **% contacted within the window** — the promise. Scored only against alerts
+  whose window has *closed* (contacted, or breached). An alert still inside its
+  window has not been missed and can yet be called; counting it would drop the
+  headline every time a new alert arrived, punishing a club for a busy Saturday.
+  Those are reported separately as `still_in_window`.
 - **Median hours to first contact** — the texture.
 - **% who rated the club higher on their next survey** — the proof, and the only
   one about the member's experience rather than the club's process.
