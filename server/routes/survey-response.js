@@ -151,11 +151,29 @@ router.post("/:token", async (req, res) => {
     };
     if (aiSummary) alertInsert.ai_summary = aiSummary;
 
-    const { error: alertErr } = await supabase.from("case_alerts").insert(alertInsert);
-    if (alertErr && alertErr.message && alertErr.message.includes("ai_summary")) {
-      delete alertInsert.ai_summary;
-      await supabase.from("case_alerts").insert(alertInsert);
+    // Start the clock the moment the alert exists. The window to ring the
+    // member runs from their complaint, not from whenever a manager next opens
+    // the dashboard — computing it later would quietly hand the club back the
+    // hours it had already used up.
+    try {
+      const recovery = require("../lib/recovery");
+      const { loadSlaSettings } = require("../lib/recovery-store");
+      const due = recovery.contactDueAt(new Date().toISOString(), severity, await loadSlaSettings());
+      if (due) alertInsert.contact_due_at = due;
+    } catch (e) {
+      console.error("[recovery] could not set contact_due_at:", e.message);
     }
+
+    // Each optional column depends on a migration that may not have run yet.
+    // Strip whichever one the error names and retry, rather than losing the
+    // alert entirely — an alert that fails to save is a member nobody hears.
+    let { error: alertErr } = await supabase.from("case_alerts").insert(alertInsert);
+    for (const col of ["ai_summary", "contact_due_at"]) {
+      if (!alertErr || !alertErr.message || !alertErr.message.includes(col)) continue;
+      delete alertInsert[col];
+      ({ error: alertErr } = await supabase.from("case_alerts").insert(alertInsert));
+    }
+    if (alertErr) console.error("[alerts] could not create alert:", alertErr.message);
 
     if (severity === "high" || severity === "medium") {
       const url = dashboardUrl();

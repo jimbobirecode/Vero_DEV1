@@ -87,4 +87,89 @@ router.post("/daily-digest", async (req, res) => {
   }
 });
 
+// POST /api/cron/recovery-sweep — hourly.
+//
+// A daily digest is the wrong instrument for a promise measured in hours: an
+// alert raised at 10am with a 24-hour window would get its first and only
+// nudge after it had already expired. This runs hourly and nudges at half the
+// window, at 90%, and once on breach — each stage sent once, because a prompt
+// that arrives every hour is one people filter.
+router.post("/recovery-sweep", async (req, res) => {
+  try {
+    const recovery = require("../lib/recovery");
+    const store = require("../lib/recovery-store");
+    const { notifyStaffMember } = require("../lib/notify");
+
+    const ready = await store.recoveryReady();
+    if (!ready.ok) return res.status(503).json({ error: ready.error });
+
+    const { data, error } = await supabase
+      .from("case_alerts")
+      .select(store.ALERT_WITH_MEMBER)
+      .neq("status", "resolved")
+      .is("first_contact_at", null)
+      .limit(500);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const settings = await store.loadSlaSettings();
+    const url = dashboardUrl();
+    const now = Date.now();
+    const sent = [];
+
+    for (const row of data || []) {
+      let alert = store.shapeAlert(row);
+      if (!alert.contact_due_at) alert = await store.ensureDueDate(alert, settings);
+
+      const stage = recovery.escalationStage(alert, now);
+      if (!stage) continue;
+
+      const token = await store.ensureRecoveryToken(alert.alert_id, alert.recovery_token);
+      const who = alert.member_name || "a member";
+      const outlet = alert.outlet_name ? ` at ${alert.outlet_name}` : "";
+      const remaining = recovery.formatRemaining(recovery.slaState(alert, now).ms_remaining);
+
+      const subject = stage === "breached"
+        ? `[Club Vero] MISSED — ${who} was never called back`
+        : `[Club Vero] ${who} is still waiting for a call (${remaining})`;
+
+      let body = stage === "breached"
+        ? `${who} had a poor experience${outlet} and the window to call them back has passed.\n\n`
+          + `It is still worth ringing — a late call lands better than none — but this one is recorded as missed.\n`
+        : `${who} had a poor experience${outlet} and has not been called back yet.\n\n${remaining}.\n`;
+
+      if (alert.member_phone) body += `\nPhone: ${alert.member_phone}`;
+      else if (alert.member_email) body += `\nEmail: ${alert.member_email}`;
+      else body += `\nNo phone or email on file — this member cannot be reached. Resolve the alert and record why.`;
+
+      if (alert.comment) body += `\n\nThey said: "${alert.comment}"`;
+      if (token && url) body += `\n\nAlready called? Log it in one tap:\n${url}/c/${token}`;
+      if (url) body += `\n\nDashboard: ${url}`;
+      body += `\n\n${CLUB_NAME}`;
+
+      // The assignee owns it. With nobody assigned it goes to the managers,
+      // because an unassigned alert running out of time is exactly the case
+      // where nobody currently feels responsible.
+      if (alert.assigned_to_staff_id) {
+        await notifyStaffMember(alert.assigned_to_staff_id, subject, body)
+          .catch((e) => console.error("[recovery] notify failed:", e.message));
+      } else {
+        await notifyManagers(subject, body)
+          .catch((e) => console.error("[recovery] notify failed:", e.message));
+      }
+
+      await supabase.from("case_alerts")
+        .update({ escalated_stage: stage, escalated_at: new Date().toISOString() })
+        .eq("alert_id", alert.alert_id);
+
+      sent.push({ alert_id: alert.alert_id, stage, member: alert.member_name });
+    }
+
+    console.log(`[recovery] swept ${(data || []).length} open alerts, escalated ${sent.length}`);
+    res.json({ swept: (data || []).length, escalated: sent.length, details: sent });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
