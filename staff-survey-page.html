@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Shift Feedback</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --forest:#16302A; --ivory:#F5F2EA; --brass:#B08A4E; --brass-light:#D9BC8B;
+    --ink:#20241F; --ink-soft:#5B6259; --line:#E4DFD1; --brick:#9C4A34;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ivory);color:var(--ink);font-family:'Inter',sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .card{background:#fff;border-radius:16px;max-width:420px;width:100%;padding:28px 24px 24px;
+        box-shadow:0 10px 30px rgba(22,48,42,0.08);}
+  .brand{font-family:'Fraunces',serif;font-size:15px;color:var(--forest);font-weight:600;letter-spacing:0.3px;}
+  .club{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+  .progress{display:flex;gap:5px;margin:18px 0 22px;}
+  .progress div{height:4px;flex:1;background:var(--line);border-radius:3px;}
+  .progress div.on{background:var(--brass);}
+  h1{font-family:'Fraunces',serif;font-size:19px;font-weight:500;margin:0 0 6px;line-height:1.35;}
+  .hint{font-size:12.5px;color:var(--ink-soft);margin-bottom:20px;}
+  .scale-row{display:flex;gap:6px;margin:14px 0 4px;}
+  .scale-btn{flex:1 1 0;min-width:0;height:46px;border-radius:8px;border:1px solid var(--line);background:#fff;
+             font-size:15px;font-weight:600;color:var(--ink);cursor:pointer;font-family:'Inter',sans-serif;}
+  .scale-btn.sel{background:var(--forest);color:#fff;border-color:var(--forest);}
+  .scale-labels{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-soft);margin-top:4px;}
+  textarea{width:100%;min-height:120px;border:1px solid var(--line);border-radius:10px;padding:12px;
+           font-family:'Inter',sans-serif;font-size:13.5px;resize:vertical;}
+  .charcount{text-align:right;font-size:10.5px;color:var(--ink-soft);margin-top:4px;}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:22px;}
+  .btn{background:var(--forest);color:#fff;border:none;padding:11px 20px;border-radius:8px;
+       font-weight:600;font-size:13.5px;cursor:pointer;font-family:'Inter',sans-serif;}
+  .btn:disabled{opacity:0.4;cursor:default;}
+  .skip{background:none;border:none;color:var(--ink-soft);font-size:12.5px;cursor:pointer;text-decoration:underline;}
+  .done{text-align:center;padding:20px 0;}
+  .done .mark{font-family:'Fraunces',serif;font-size:22px;color:var(--forest);}
+  .done p{font-size:13.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;}
+  @media (max-width:400px){ .card{padding:24px 16px 20px;} .scale-row{gap:4px;} .scale-btn{font-size:14px;} }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="brand">Vero</div>
+  <div class="club" id="surveyClubName"></div>
+  <div class="progress" id="progress"></div>
+  <div id="steps"></div>
+</div>
+
+<script>
+const answers = {};
+let step = 0;
+let shiftDate = null;
+
+(async function(){
+  try {
+    const r = await fetch('/api/club-config');
+    if(r.ok){
+      const c = await r.json();
+      const el = document.getElementById('surveyClubName');
+      if(el) el.textContent = c.club_name || '';
+      document.title = (c.club_name || 'Shift') + ' — Shift Feedback';
+    }
+  } catch(_){}
+})();
+
+// A 1–5 scale throughout rather than the member survey's NPS: "would you
+// recommend us" is a guest question, and a shift is better described by how
+// it actually went than by a likelihood-to-recommend score.
+// These are the fallback, used only when the server has no staff template —
+// a database that has not had migrations/staff-survey-template.sql run. The
+// live questions come from Survey Builder, so what a manager sees there is
+// what the team is actually asked.
+const DEFAULT_QUESTIONS = [
+  { key:'q1_shift_rating', title:'How did your shift go overall?', hint:'1 = Rough, 5 = Great', low:'Rough', high:'Great', required:true },
+  { key:'q2_support', title:'Did you feel supported by management today?', hint:'1 = Not at all, 5 = Fully supported', low:'Not at all', high:'Fully', required:true },
+  { key:'q3_workload', title:'Was your workload manageable?', hint:'1 = Overwhelming, 5 = Comfortable', low:'Overwhelming', high:'Comfortable', required:true },
+  { key:'q4_tools', title:'Did you have the stock and equipment you needed?', hint:'1 = Not at all, 5 = Everything · optional', low:'Not at all', high:'Everything', required:false },
+  { key:'q5_comment', title:'Anything management should know?', hint:'Optional — 1000 characters max', type:'text', required:false }
+];
+
+let questions = DEFAULT_QUESTIONS;
+
+// The Builder stores a title, a hint, a type and whether it is required. The
+// end labels under the scale are ours: read them off the hint when it is
+// written as "1 = X, 5 = Y", and fall back to plain numbers when it isn't.
+function fromTemplate(list){
+  return list.filter(q => q && q.key).map(q => {
+    const m = /1\s*=\s*([^,]+),\s*5\s*=\s*([^·|]+)/.exec(q.hint || '');
+    return {
+      key: q.key,
+      title: q.title || q.key,
+      hint: q.hint || '',
+      low: (m && m[1].trim()) || '1',
+      high: (m && m[2].trim()) || '5',
+      type: q.type === 'text' ? 'text' : 'scale',
+      required: q.required === true,
+    };
+  });
+}
+
+function renderProgress(){
+  document.getElementById('progress').innerHTML =
+    questions.map((_,i)=>`<div class="${i<=step?'on':''}"></div>`).join('');
+}
+
+function render(){
+  renderProgress();
+  const q = questions[step];
+  const container = document.getElementById('steps');
+
+  if(step >= questions.length){
+    container.innerHTML = `<div class="done"><div class="mark">Thank you.</div>
+      <p>This goes to the management team so they can act on it. Enjoy the rest of your evening.</p></div>`;
+    return;
+  }
+
+  const dateNote = (step === 0 && shiftDate)
+    ? `<div class="hint" style="margin-bottom:14px;">For your shift on ${shiftDate}.</div>` : '';
+
+  let body = '';
+  if(q.type === 'text'){
+    body = `<textarea id="commentBox" maxlength="1000" placeholder="Type here..."></textarea>
+            <div class="charcount"><span id="cc">0</span>/1000</div>`;
+  } else {
+    body = `<div class="scale-row">${[1,2,3,4,5].map(n=>`<button class="scale-btn" data-n="${n}">${n}</button>`).join('')}</div>
+            <div class="scale-labels"><span>${q.low}</span><span>${q.high}</span></div>`;
+  }
+
+  container.innerHTML = `
+    <h1>${q.title}</h1>
+    ${dateNote}
+    <div class="hint">${q.hint}</div>
+    ${body}
+    <div class="actions">
+      ${!q.required ? `<button class="skip" onclick="next()">Skip</button>` : `<span></span>`}
+      <button class="btn" id="nextBtn" ${q.required?'disabled':''} onclick="next()">${step===questions.length-1?'Submit':'Next'}</button>
+    </div>`;
+
+  if(q.type === 'text'){
+    const box = document.getElementById('commentBox');
+    box.addEventListener('input',()=>{
+      answers[q.key] = box.value;
+      document.getElementById('cc').textContent = box.value.length;
+    });
+  } else {
+    document.querySelectorAll('.scale-btn').forEach(el=>{
+      el.addEventListener('click',()=>{
+        answers[q.key] = +el.dataset.n;
+        document.querySelectorAll('.scale-btn').forEach(b=>b.classList.remove('sel'));
+        el.classList.add('sel');
+        document.getElementById('nextBtn').disabled = false;
+      });
+    });
+  }
+}
+
+function next(){
+  step++;
+  if(step >= questions.length) submitSurvey();
+  else render();
+}
+
+// Served at /ss/<token> by the backend (see server/index.js), so the token
+// comes from the path rather than being embedded in the page.
+const SURVEY_TOKEN = window.location.pathname.split('/').filter(Boolean).pop();
+
+async function submitSurvey(){
+  render();
+  try {
+    const res = await fetch(`/api/staff-survey-response/${SURVEY_TOKEN}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      // The server maps these onto columns by question type, so a template
+      // whose questions were renamed in the Builder still stores correctly.
+      body: JSON.stringify({ answers })
+    });
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:'Something went wrong submitting your feedback.'}));
+      showSubmitError(err.error);
+    }
+  } catch(e){
+    showSubmitError("Couldn't reach the server — your feedback wasn't saved. Please try the link again.");
+  }
+}
+
+function showSubmitError(message){
+  document.getElementById('steps').innerHTML = `<div class="done">
+    <div class="mark" style="color:var(--brick);">Not submitted</div>
+    <p>${message}</p>
+  </div>`;
+}
+
+async function checkTokenAndStart(){
+  try {
+    const res = await fetch(`/api/staff-survey-response/${SURVEY_TOKEN}`);
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:'This survey link is no longer valid.'}));
+      showSubmitError(err.error);
+      return;
+    }
+    const data = await res.json();
+    shiftDate = data.shift_date || null;
+    const fromServer = Array.isArray(data.template?.questions) ? fromTemplate(data.template.questions) : [];
+    if(fromServer.length) questions = fromServer;
+    questions.forEach(q => { answers[q.key] = q.type === 'text' ? '' : null; });
+    render();
+  } catch(e){
+    showSubmitError("Couldn't reach the server. Please try the link again in a moment.");
+  }
+}
+
+checkTokenAndStart();
+</script>
+</body>
+</html>

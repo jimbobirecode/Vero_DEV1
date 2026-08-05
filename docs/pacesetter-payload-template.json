@@ -1,0 +1,32 @@
+{
+  "event": "survey_request",
+  "timestamp": "2026-07-09T14:30:00.000Z",
+  "club": {
+    "club_id": "aronimink-gc",
+    "name": "Aronimink Golf Club"
+  },
+  "member": {
+    "member_id": "R272",
+    "first_name": "Michael",
+    "last_name": "Halloran",
+    "phone_number": "+16105551001",
+    "email_address": "mhalloran@email.com",
+    "communication_preference": "sms"
+  },
+  "visit": {
+    "visit_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "visit_date": "2026-07-09",
+    "outlet_name": "Golf Patio",
+    "spend_amount": 145.00,
+    "server_name": "Jessica",
+    "visitor_type": "member"
+  },
+  "survey": {
+    "survey_token": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "survey_url": "https://vero-aronimink.onrender.com/s/f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "type": "food_bev",
+    "is_reminder": false
+  },
+  "callback_url": "https://vero-aronimink.onrender.com/api/webhooks/pacesetter",
+  "idempotency_key": "survey-R272-a1b2c3d4-2026-07-09"
+}

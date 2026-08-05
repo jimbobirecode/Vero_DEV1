@@ -1,0 +1,47 @@
+{
+  "template": {
+    "name": "Vero Survey Request",
+    "generation": "dynamic",
+    "versions": [
+      {
+        "name": "Survey Request v1",
+        "subject": "{{subject}}",
+        "active": 1,
+        "html_content": "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0;padding:0;background:#f5f2ea;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif}table{border-spacing:0}.wrapper{width:100%;background:#f5f2ea;padding:40px 0}.container{max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(22,48,42,0.06)}.header{background:#16302a;padding:28px 32px 24px;text-align:center}.header .club-name{color:#ffffff;font-size:18px;font-weight:600;letter-spacing:0.3px;margin:0}.header .powered{color:rgba(255,255,255,0.5);font-size:11px;margin-top:4px}.body-content{padding:32px 32px 28px}.greeting{font-size:16px;font-weight:600;color:#20241f;margin:0 0 12px}.message{font-size:14px;line-height:1.6;color:#5b6259;margin:0 0 8px}.visit-detail{font-size:13px;color:#8a8a8a;margin:0 0 24px}.cta-row{text-align:center;padding:0 0 8px}.cta-btn{display:inline-block;background:#16302a;color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:0.2px}.cta-sub{text-align:center;font-size:12px;color:#8a8a8a;margin:8px 0 0}.footer{background:#f5f2ea;padding:20px 32px;text-align:center;border-top:1px solid #e4dfd1}.footer p{font-size:11px;color:#8a8a8a;margin:0;line-height:1.5}</style></head><body><div class='wrapper'><table class='container' align='center' cellpadding='0' cellspacing='0'><tr><td class='header'><p class='club-name'>{{club_name}}</p><p class='powered'>Powered by Vero</p></td></tr><tr><td class='body-content'><p class='greeting'>Hi {{first_name}},</p><p class='message'>We'd love to hear about your recent visit. Your feedback helps us improve — it takes less than a minute.</p><p class='visit-detail'>{{#if outlet_name}}{{outlet_name}}{{/if}}{{#if visit_date}} · {{visit_date}}{{/if}}{{#if event_name}} · {{event_name}}{{/if}}</p><div class='cta-row'><a href='{{survey_url}}' class='cta-btn'>Share your feedback</a></div><p class='cta-sub'>Takes under 60 seconds</p></td></tr><tr><td class='footer'><p>{{club_name}}<br>This survey was sent because you recently visited. If you'd prefer not to receive these, let the front desk know.</p></td></tr></table></div></body></html>",
+        "plain_content": "Hi {{first_name}},\n\nWe'd love to hear about your recent visit to {{club_name}}.\n\nShare your feedback (takes under a minute):\n{{survey_url}}\n\n{{club_name}}",
+        "test_data": {
+          "subject": "How was your visit today?",
+          "club_name": "Aronimink Golf Club",
+          "first_name": "Michael",
+          "last_name": "Halloran",
+          "survey_url": "https://vero.onrender.com/s/f47ac10b-58cc-4372-a567-0e02b2c3d479",
+          "outlet_name": "Golf Patio",
+          "visit_date": "2026-07-09",
+          "event_name": "",
+          "is_reminder": false
+        }
+      }
+    ]
+  },
+  "reminder_template": {
+    "name": "Vero Survey Reminder",
+    "generation": "dynamic",
+    "versions": [
+      {
+        "name": "Survey Reminder v1",
+        "subject": "{{subject}}",
+        "active": 1,
+        "html_content": "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0;padding:0;background:#f5f2ea;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif}table{border-spacing:0}.wrapper{width:100%;background:#f5f2ea;padding:40px 0}.container{max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(22,48,42,0.06)}.header{background:#16302a;padding:28px 32px 24px;text-align:center}.header .club-name{color:#ffffff;font-size:18px;font-weight:600;letter-spacing:0.3px;margin:0}.header .powered{color:rgba(255,255,255,0.5);font-size:11px;margin-top:4px}.body-content{padding:32px 32px 28px}.greeting{font-size:16px;font-weight:600;color:#20241f;margin:0 0 12px}.message{font-size:14px;line-height:1.6;color:#5b6259;margin:0 0 24px}.cta-row{text-align:center;padding:0 0 8px}.cta-btn{display:inline-block;background:#b08a4e;color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:0.2px}.cta-sub{text-align:center;font-size:12px;color:#8a8a8a;margin:8px 0 0}.footer{background:#f5f2ea;padding:20px 32px;text-align:center;border-top:1px solid #e4dfd1}.footer p{font-size:11px;color:#8a8a8a;margin:0;line-height:1.5}</style></head><body><div class='wrapper'><table class='container' align='center' cellpadding='0' cellspacing='0'><tr><td class='header'><p class='club-name'>{{club_name}}</p><p class='powered'>Powered by Vero</p></td></tr><tr><td class='body-content'><p class='greeting'>Hi {{first_name}},</p><p class='message'>Just a quick reminder — we'd still love to hear about your recent visit. Your feedback makes a real difference, and it only takes a minute.</p><div class='cta-row'><a href='{{survey_url}}' class='cta-btn'>Share your feedback</a></div><p class='cta-sub'>Takes under 60 seconds</p></td></tr><tr><td class='footer'><p>{{club_name}}<br>This is a one-time reminder. If you'd prefer not to receive these, let the front desk know.</p></td></tr></table></div></body></html>",
+        "plain_content": "Hi {{first_name}},\n\nQuick reminder — we'd still love to hear about your recent visit.\n\nShare your feedback (takes under a minute):\n{{survey_url}}\n\n{{club_name}}",
+        "test_data": {
+          "subject": "Quick reminder",
+          "club_name": "Aronimink Golf Club",
+          "first_name": "Michael",
+          "last_name": "Halloran",
+          "survey_url": "https://vero.onrender.com/s/f47ac10b-58cc-4372-a567-0e02b2c3d479",
+          "is_reminder": true
+        }
+      }
+    ]
+  }
+}

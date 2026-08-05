@@ -1,0 +1,662 @@
+<title>Vero × Pacesetter — Survey Delivery Integration</title>
+<style>
+  :root {
+    --forest: #1B4332;
+    --sage: #2D6A4F;
+    --sage-light: #40916C;
+    --stone: #7A7062;
+    --stone-light: #A89F91;
+    --surface: #FAFAF7;
+    --surface-raised: #FFFFFF;
+    --ink: #1A1A18;
+    --ink-soft: #4A4740;
+    --border: #D4CFC7;
+    --border-light: #E8E4DE;
+    --code-bg: #F3F1EC;
+    --code-border: #DDD8D0;
+    --key-color: #1B4332;
+    --string-color: #6A4C2E;
+    --number-color: #5B3A8C;
+    --bool-color: #2D6A4F;
+    --badge-bg: #E8F0EB;
+    --badge-color: #1B4332;
+    --table-stripe: #F5F3EF;
+    --required-color: #8B3A3A;
+    --optional-color: #7A7062;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --forest: #7BC4A0;
+      --sage: #52B788;
+      --sage-light: #74C69D;
+      --stone: #A89F91;
+      --stone-light: #7A7062;
+      --surface: #141413;
+      --surface-raised: #1E1E1C;
+      --ink: #E8E4DE;
+      --ink-soft: #B0A99E;
+      --border: #333028;
+      --border-light: #2A2720;
+      --code-bg: #1A1918;
+      --code-border: #2E2B26;
+      --key-color: #7BC4A0;
+      --string-color: #D4A574;
+      --number-color: #B8A0D4;
+      --bool-color: #74C69D;
+      --badge-bg: #1B2E24;
+      --badge-color: #7BC4A0;
+      --table-stripe: #1A1918;
+      --required-color: #D48B8B;
+      --optional-color: #A89F91;
+    }
+  }
+  :root[data-theme="dark"] {
+    --forest: #7BC4A0;
+    --sage: #52B788;
+    --sage-light: #74C69D;
+    --stone: #A89F91;
+    --stone-light: #7A7062;
+    --surface: #141413;
+    --surface-raised: #1E1E1C;
+    --ink: #E8E4DE;
+    --ink-soft: #B0A99E;
+    --border: #333028;
+    --border-light: #2A2720;
+    --code-bg: #1A1918;
+    --code-border: #2E2B26;
+    --key-color: #7BC4A0;
+    --string-color: #D4A574;
+    --number-color: #B8A0D4;
+    --bool-color: #74C69D;
+    --badge-bg: #1B2E24;
+    --badge-color: #7BC4A0;
+    --table-stripe: #1A1918;
+    --required-color: #D48B8B;
+    --optional-color: #A89F91;
+  }
+  :root[data-theme="light"] {
+    --forest: #1B4332;
+    --sage: #2D6A4F;
+    --sage-light: #40916C;
+    --stone: #7A7062;
+    --stone-light: #A89F91;
+    --surface: #FAFAF7;
+    --surface-raised: #FFFFFF;
+    --ink: #1A1A18;
+    --ink-soft: #4A4740;
+    --border: #D4CFC7;
+    --border-light: #E8E4DE;
+    --code-bg: #F3F1EC;
+    --code-border: #DDD8D0;
+    --key-color: #1B4332;
+    --string-color: #6A4C2E;
+    --number-color: #5B3A8C;
+    --bool-color: #2D6A4F;
+    --badge-bg: #E8F0EB;
+    --badge-color: #1B4332;
+    --table-stripe: #F5F3EF;
+    --required-color: #8B3A3A;
+    --optional-color: #7A7062;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    background: var(--surface);
+    color: var(--ink);
+    line-height: 1.62;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+  }
+
+  /* ---- Header ---- */
+  .doc-header {
+    border-bottom: 2px solid var(--forest);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+  .doc-header .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sage);
+    margin-bottom: 8px;
+  }
+  .doc-header h1 {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--ink);
+    text-wrap: balance;
+    margin-bottom: 6px;
+  }
+  .doc-header .subtitle {
+    font-size: 15px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+  .doc-meta {
+    display: flex;
+    gap: 24px;
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--stone);
+  }
+  .doc-meta span { white-space: nowrap; }
+
+  /* ---- Sections ---- */
+  .section {
+    margin-bottom: 40px;
+  }
+  .section h2 {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .section h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--forest);
+    margin-top: 24px;
+    margin-bottom: 8px;
+    letter-spacing: 0.01em;
+  }
+  .section p {
+    color: var(--ink-soft);
+    margin-bottom: 12px;
+    max-width: 62ch;
+  }
+
+  /* ---- Flow diagram ---- */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 20px 0 24px;
+    overflow-x: auto;
+    padding: 4px 0;
+  }
+  .flow-step {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .flow-step.highlight {
+    background: var(--badge-bg);
+    border-color: var(--sage);
+    color: var(--forest);
+  }
+  .flow-arrow {
+    flex-shrink: 0;
+    width: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--stone-light);
+    font-size: 14px;
+  }
+
+  /* ---- Code blocks ---- */
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 12px 0 16px;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.65;
+    tab-size: 2;
+  }
+  .code-block .k { color: var(--key-color); font-weight: 600; }
+  .code-block .s { color: var(--string-color); }
+  .code-block .n { color: var(--number-color); }
+  .code-block .b { color: var(--bool-color); font-weight: 600; }
+  .code-block .c { color: var(--stone-light); font-style: italic; }
+  .code-label {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sage);
+    margin-bottom: 4px;
+  }
+
+  /* ---- Tables ---- */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 12px 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--stone);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border-light);
+    vertical-align: top;
+    color: var(--ink-soft);
+  }
+  tbody tr:nth-child(even) td { background: var(--table-stripe); }
+  tbody tr:last-child td { border-bottom: none; }
+  td code {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--forest);
+    white-space: nowrap;
+  }
+  .req {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .req.yes { color: var(--required-color); }
+  .req.no  { color: var(--optional-color); }
+
+  /* ---- Badges ---- */
+  .method-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--badge-bg);
+    color: var(--badge-color);
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    vertical-align: middle;
+  }
+
+  /* ---- Callout ---- */
+  .callout {
+    border-left: 3px solid var(--sage);
+    background: var(--badge-bg);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 16px 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .callout strong { color: var(--forest); }
+
+  /* ---- List ---- */
+  .section ul, .section ol {
+    padding-left: 20px;
+    margin-bottom: 12px;
+    color: var(--ink-soft);
+  }
+  .section li { margin-bottom: 4px; }
+  .section li code {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--forest);
+  }
+
+  /* ---- Footer ---- */
+  .doc-footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-light);
+    font-size: 12px;
+    color: var(--stone);
+  }
+
+  @media (max-width: 600px) {
+    .page { padding: 32px 16px 48px; }
+    .doc-header h1 { font-size: 22px; }
+    .doc-meta { flex-direction: column; gap: 4px; }
+    .flow { flex-wrap: wrap; gap: 4px; }
+    .flow-arrow { width: 20px; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="doc-header">
+    <div class="eyebrow">Integration Specification</div>
+    <h1>Vero Survey Delivery — Webhook API</h1>
+    <p class="subtitle">Technical specification for outbound survey delivery via Pacesetter, replacing direct Twilio SMS and SendGrid email.</p>
+    <div class="doc-meta">
+      <span>Prepared for <strong>Pacesetter</strong></span>
+      <span>Version 1.0</span>
+      <span>July 2026</span>
+      <span>Status: <strong>Draft</strong></span>
+    </div>
+  </header>
+
+  <!-- 1. Overview -->
+  <div class="section">
+    <h2>Overview</h2>
+    <p>Vero is the member-feedback platform used by Aronimink Golf Club. It processes daily POS data, identifies members eligible for post-visit surveys, and currently delivers those surveys via Twilio (SMS) and SendGrid (email).</p>
+    <p>This integration replaces direct delivery with an outbound webhook to Pacesetter. Vero determines <em>who</em> to survey and <em>when</em>; Pacesetter handles <em>how</em> the survey reaches the member and reports delivery status back.</p>
+
+    <h3>Delivery flow</h3>
+    <div class="flow">
+      <div class="flow-step">POS upload</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Eligibility check</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step highlight">POST to Pacesetter</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Member receives survey</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Callback to Vero</div>
+    </div>
+  </div>
+
+  <!-- 2. Authentication -->
+  <div class="section">
+    <h2>Authentication</h2>
+    <p>All requests from Vero to Pacesetter include a bearer token in the <code>Authorization</code> header. Pacesetter will issue this token during onboarding.</p>
+
+    <div class="code-block">
+<span class="k">POST</span> <span class="s">https://api.pacesetter.com/v1/surveys/deliver</span>
+<span class="k">Authorization:</span> <span class="s">Bearer {PACESETTER_API_TOKEN}</span>
+<span class="k">Content-Type:</span> <span class="s">application/json</span>
+<span class="k">Idempotency-Key:</span> <span class="s">survey-R272-a1b2c3d4-2026-07-09</span>
+    </div>
+
+    <p>Callbacks from Pacesetter to Vero are authenticated with an HMAC-SHA256 signature in the <code>X-Signature</code> header, computed over the raw request body using a shared secret.</p>
+
+    <div class="callout">
+      <strong>Idempotency:</strong> Every request includes an <code>Idempotency-Key</code> header. If Pacesetter receives a duplicate key within 24 hours, it should return the original response without re-sending.
+    </div>
+  </div>
+
+  <!-- 3. Webhook payload -->
+  <div class="section">
+    <h2>Outbound payload</h2>
+    <p>Vero sends one request per eligible member per visit. Reminders are a separate event with <code>is_reminder: true</code>.</p>
+
+    <div class="code-label">Request body</div>
+    <div class="code-block">{
+  <span class="k">"event"</span>: <span class="s">"survey_request"</span>,
+  <span class="k">"timestamp"</span>: <span class="s">"2026-07-09T14:30:00.000Z"</span>,
+  <span class="k">"idempotency_key"</span>: <span class="s">"survey-R272-a1b2c3d4-2026-07-09"</span>,
+
+  <span class="k">"club"</span>: {
+    <span class="k">"club_id"</span>: <span class="s">"aronimink-gc"</span>,
+    <span class="k">"name"</span>: <span class="s">"Aronimink Golf Club"</span>
+  },
+
+  <span class="k">"member"</span>: {
+    <span class="k">"member_id"</span>: <span class="s">"R272"</span>,
+    <span class="k">"first_name"</span>: <span class="s">"Michael"</span>,
+    <span class="k">"last_name"</span>: <span class="s">"Halloran"</span>,
+    <span class="k">"phone_number"</span>: <span class="s">"+16105551001"</span>,
+    <span class="k">"email_address"</span>: <span class="s">"mhalloran@email.com"</span>,
+    <span class="k">"communication_preference"</span>: <span class="s">"sms"</span>
+  },
+
+  <span class="k">"visit"</span>: {
+    <span class="k">"visit_id"</span>: <span class="s">"a1b2c3d4-e5f6-7890-abcd-ef1234567890"</span>,
+    <span class="k">"visit_date"</span>: <span class="s">"2026-07-09"</span>,
+    <span class="k">"outlet_name"</span>: <span class="s">"Golf Patio"</span>,
+    <span class="k">"spend_amount"</span>: <span class="n">145.00</span>,
+    <span class="k">"server_name"</span>: <span class="s">"Jessica"</span>,
+    <span class="k">"visitor_type"</span>: <span class="s">"member"</span>
+  },
+
+  <span class="k">"survey"</span>: {
+    <span class="k">"survey_token"</span>: <span class="s">"f47ac10b-58cc-4372-a567-0e02b2c3d479"</span>,
+    <span class="k">"survey_url"</span>: <span class="s">"https://vero.aronimink.com/s/f47ac10b-..."</span>,
+    <span class="k">"type"</span>: <span class="s">"food_bev"</span>,
+    <span class="k">"is_reminder"</span>: <span class="b">false</span>
+  },
+
+  <span class="k">"callback_url"</span>: <span class="s">"https://vero.aronimink.com/api/webhooks/pacesetter"</span>
+}</div>
+  </div>
+
+  <!-- 4. Field reference -->
+  <div class="section">
+    <h2>Field reference</h2>
+
+    <h3>Top-level fields</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>event</code></td><td>string</td><td><span class="req yes">required</span></td><td><code>survey_request</code> for initial, <code>survey_reminder</code> for 48h follow-up</td></tr>
+          <tr><td><code>timestamp</code></td><td>ISO 8601</td><td><span class="req yes">required</span></td><td>When Vero dispatched the request</td></tr>
+          <tr><td><code>idempotency_key</code></td><td>string</td><td><span class="req yes">required</span></td><td>Unique per survey send attempt; format: <code>survey-{member_id}-{visit_id}-{date}</code></td></tr>
+          <tr><td><code>callback_url</code></td><td>URL</td><td><span class="req yes">required</span></td><td>Where Pacesetter posts delivery status updates</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>club</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>club_id</code></td><td>string</td><td><span class="req yes">required</span></td><td>Stable identifier for the club account</td></tr>
+          <tr><td><code>name</code></td><td>string</td><td><span class="req yes">required</span></td><td>Display name, used in message templates</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>member</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>member_id</code></td><td>string</td><td><span class="req yes">required</span></td><td>Club membership ID from the POS system</td></tr>
+          <tr><td><code>first_name</code></td><td>string</td><td><span class="req yes">required</span></td><td>Member's first name</td></tr>
+          <tr><td><code>last_name</code></td><td>string</td><td><span class="req yes">required</span></td><td>Member's last name</td></tr>
+          <tr><td><code>phone_number</code></td><td>string</td><td><span class="req no">conditional</span></td><td>E.164 format. Present when <code>communication_preference</code> is <code>sms</code></td></tr>
+          <tr><td><code>email_address</code></td><td>string</td><td><span class="req no">conditional</span></td><td>Present when <code>communication_preference</code> is <code>email</code>, or as fallback</td></tr>
+          <tr><td><code>communication_preference</code></td><td>string</td><td><span class="req yes">required</span></td><td><code>sms</code> or <code>email</code> — the member's preferred channel</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>visit</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>visit_id</code></td><td>UUID</td><td><span class="req yes">required</span></td><td>Unique visit record in Vero</td></tr>
+          <tr><td><code>visit_date</code></td><td>YYYY-MM-DD</td><td><span class="req yes">required</span></td><td>Date of the visit</td></tr>
+          <tr><td><code>outlet_name</code></td><td>string</td><td><span class="req yes">required</span></td><td>Dining venue name (e.g. "Golf Patio", "Belmont Dining Room")</td></tr>
+          <tr><td><code>spend_amount</code></td><td>number</td><td><span class="req yes">required</span></td><td>Total spend in USD</td></tr>
+          <tr><td><code>server_name</code></td><td>string</td><td><span class="req no">optional</span></td><td>Server who handled the visit, if known from POS data</td></tr>
+          <tr><td><code>visitor_type</code></td><td>string</td><td><span class="req yes">required</span></td><td><code>member</code>, <code>visitor</code>, <code>golf</code>, <code>commercial</code>, or <code>other</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>survey</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>survey_token</code></td><td>UUID</td><td><span class="req yes">required</span></td><td>Unique token for this survey instance</td></tr>
+          <tr><td><code>survey_url</code></td><td>URL</td><td><span class="req yes">required</span></td><td>Full URL the member clicks to take the survey. Pacesetter includes this in the message body</td></tr>
+          <tr><td><code>type</code></td><td>string</td><td><span class="req yes">required</span></td><td>Survey template: <code>food_bev</code>, <code>golf</code>, or <code>events</code></td></tr>
+          <tr><td><code>is_reminder</code></td><td>boolean</td><td><span class="req yes">required</span></td><td><code>false</code> for initial send, <code>true</code> for 48-hour follow-up</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 5. Expected response -->
+  <div class="section">
+    <h2>Expected response</h2>
+    <p>Pacesetter should respond synchronously to confirm receipt. Actual delivery happens asynchronously; status updates come via the callback.</p>
+
+    <div class="code-label">Success — 202 Accepted</div>
+    <div class="code-block">{
+  <span class="k">"status"</span>: <span class="s">"accepted"</span>,
+  <span class="k">"pacesetter_id"</span>: <span class="s">"ps_msg_9f8e7d6c5b4a"</span>
+}</div>
+
+    <div class="code-label">Duplicate — 200 OK</div>
+    <div class="code-block">{
+  <span class="k">"status"</span>: <span class="s">"duplicate"</span>,
+  <span class="k">"pacesetter_id"</span>: <span class="s">"ps_msg_9f8e7d6c5b4a"</span>,
+  <span class="k">"original_timestamp"</span>: <span class="s">"2026-07-09T14:30:01.000Z"</span>
+}</div>
+
+    <div class="code-label">Error — 4xx / 5xx</div>
+    <div class="code-block">{
+  <span class="k">"status"</span>: <span class="s">"error"</span>,
+  <span class="k">"code"</span>: <span class="s">"INVALID_PHONE"</span>,
+  <span class="k">"message"</span>: <span class="s">"Phone number +16105551001 is not reachable"</span>
+}</div>
+
+    <p>Vero will retry on 5xx responses up to 3 times with exponential backoff (2s, 8s, 32s). 4xx errors are not retried.</p>
+  </div>
+
+  <!-- 6. Delivery callback -->
+  <div class="section">
+    <h2>Delivery callback</h2>
+    <p>Pacesetter posts delivery status updates to the <code>callback_url</code> provided in the original request. Vero uses these to update its message log and track delivery health.</p>
+
+    <div class="code-label"><span class="method-badge">POST</span> callback from Pacesetter → Vero</div>
+    <div class="code-block">{
+  <span class="k">"event"</span>: <span class="s">"delivery_status"</span>,
+  <span class="k">"pacesetter_id"</span>: <span class="s">"ps_msg_9f8e7d6c5b4a"</span>,
+  <span class="k">"survey_token"</span>: <span class="s">"f47ac10b-58cc-4372-a567-0e02b2c3d479"</span>,
+  <span class="k">"status"</span>: <span class="s">"delivered"</span>,
+  <span class="k">"channel"</span>: <span class="s">"sms"</span>,
+  <span class="k">"delivered_at"</span>: <span class="s">"2026-07-09T14:30:12.000Z"</span>,
+  <span class="k">"error_code"</span>: <span class="b">null</span>,
+  <span class="k">"error_message"</span>: <span class="b">null</span>
+}</div>
+
+    <h3>Callback status values</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Status</th><th>Meaning</th><th>Vero action</th></tr></thead>
+        <tbody>
+          <tr><td><code>queued</code></td><td>Accepted, pending delivery</td><td>No action</td></tr>
+          <tr><td><code>delivered</code></td><td>Confirmed delivered to carrier / inbox</td><td>Log success, mark <code>survey_sent_at</code></td></tr>
+          <tr><td><code>failed</code></td><td>Permanent failure (invalid number, hard bounce)</td><td>Log error, flag member for review</td></tr>
+          <tr><td><code>undeliverable</code></td><td>Temporary failure after retries exhausted</td><td>Log error, try alternate channel if available</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>Signature verification:</strong> Vero will verify the <code>X-Signature</code> header on every callback. Unsigned or incorrectly signed requests are rejected with 401.
+    </div>
+  </div>
+
+  <!-- 7. Eligibility logic -->
+  <div class="section">
+    <h2>Eligibility logic (for reference)</h2>
+    <p>Pacesetter does not need to implement eligibility — Vero handles this before sending. Included here so Pacesetter understands why certain members are or aren't sent.</p>
+    <ol>
+      <li>Member's spend at the outlet meets or exceeds the outlet's <strong>minimum spend threshold</strong></li>
+      <li>Member has <strong>not opted out</strong> of communications</li>
+      <li>Member has <strong>not been surveyed</strong> for the same outlet within the <strong>frequency limit</strong> (default: 30 days)</li>
+      <li>Visit has a linked member with at least one valid contact method</li>
+    </ol>
+  </div>
+
+  <!-- 8. Message content -->
+  <div class="section">
+    <h2>Message content</h2>
+    <p>Pacesetter may use its own message templates. The following is the current copy for reference:</p>
+
+    <h3>Initial survey (SMS)</h3>
+    <div class="code-block"><span class="s">Aronimink Golf Club: We'd love your quick feedback
+on today's visit. Takes under a minute: {survey_url}</span></div>
+
+    <h3>Reminder (SMS)</h3>
+    <div class="code-block"><span class="s">Quick reminder — we'd still love to hear about
+your recent visit: {survey_url}</span></div>
+
+    <h3>Initial survey (email)</h3>
+    <div class="code-block"><span class="k">Subject:</span> <span class="s">How was your visit today?</span>
+<span class="k">Body:</span>   <span class="s">{Same message as SMS, or Pacesetter's own email template}</span></div>
+
+    <div class="callout">
+      <strong>Personalization tokens available:</strong> <code>{first_name}</code>, <code>{last_name}</code>, <code>{outlet_name}</code>, <code>{visit_date}</code>, <code>{survey_url}</code>. Pacesetter can use any of these in its templates.
+    </div>
+  </div>
+
+  <!-- 9. Testing -->
+  <div class="section">
+    <h2>Testing &amp; sandbox</h2>
+    <p>During integration, Vero will send requests with a test bearer token to Pacesetter's sandbox endpoint. Test payloads use the following conventions:</p>
+    <ul>
+      <li>Club ID: <code>aronimink-gc-test</code></li>
+      <li>Member IDs prefixed with <code>TEST</code> (e.g. <code>TEST01</code>)</li>
+      <li>Phone numbers in the +1555012xxxx range (non-routable)</li>
+      <li>Email addresses at <code>@test.vero.club</code></li>
+    </ul>
+    <p>Pacesetter should accept these without attempting actual delivery and return simulated status callbacks.</p>
+  </div>
+
+  <!-- 10. Timeline -->
+  <div class="section">
+    <h2>Open questions</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Question</th><th>Owner</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Pacesetter sandbox endpoint URL and test credentials</td><td>Pacesetter</td></tr>
+          <tr><td>2</td><td>Preferred HMAC shared secret exchange method (email, vault, etc.)</td><td>Both</td></tr>
+          <tr><td>3</td><td>Does Pacesetter want to own message templates entirely, or merge with Vero's copy?</td><td>Pacesetter</td></tr>
+          <tr><td>4</td><td>Rate limits on the delivery endpoint (requests per second / per minute)</td><td>Pacesetter</td></tr>
+          <tr><td>5</td><td>Callback retry policy if Vero's endpoint is temporarily unavailable</td><td>Both</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="doc-footer">
+    Vero — Aronimink Golf Club · Prepared by the Vero engineering team · Confidential
+  </footer>
+
+</div>

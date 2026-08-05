@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Club Vero Feedback Survey</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f2f4f1; font-family: Arial, Helvetica, sans-serif;">
+  <!-- Preheader: the grey line shown next to the subject in most inboxes.
+       Hidden in the body itself. -->
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">
+    Two minutes of your time helps us keep things running smoothly.
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f2f4f1; padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+          <!-- Header. The logo must be served over https: Outlook and Gmail
+               block an http image outright, which is why it rendered as a
+               broken placeholder, and mixed content is itself a spam signal. -->
+          <tr>
+            <td style="background-color:#1f4d3a; padding:24px 32px;" align="center">
+              <img src="https://cdn.mcauto-images-production.sendgrid.net/509f56a4911522dc/6518be3b-3a79-4a80-9b9f-e51f096e032b/246x381.jpg" alt="Club Vero" width="120" style="display:block; max-width:120px; height:auto; border:0;">
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 32px 24px 32px;">
+              <p style="margin:0 0 8px 0; font-size:15px; color:#6b6b6b;">{{club_name}}</p>
+
+              <h1 style="margin:0 0 16px 0; font-size:22px; color:#1a1a1a; font-weight:bold;">
+                {{#if first_name}}{{first_name}}, how{{else}}How{{/if}} was your experience{{#if outlet_name}} at {{outlet_name}}{{/if}}?
+              </h1>
+
+              <p style="margin:0 0 24px 0; font-size:15px; line-height:1.5; color:#3a3a3a;">
+                We'd love to hear about your experience. It only takes 30 seconds, and your feedback helps us keep things running smoothly for every member.
+              </p>
+
+              <!-- CTA. survey_url is the member's unique one-time link — without
+                   it the email is unusable, so it must stay exactly as-is. -->
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="background-color:#1f4d3a; border-radius:6px;">
+                    <a href="{{survey_url}}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">
+                      Share Your Feedback
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Some clients strip buttons; give them the raw link too. -->
+              <p style="margin:20px 0 0 0; font-size:12px; line-height:1.5; color:#8a8a8a;">
+                If the button doesn't work, paste this into your browser:<br>
+                <a href="{{survey_url}}" style="color:#1f4d3a; word-break:break-all;">{{survey_url}}</a>
+              </p>
+
+              <p style="margin:24px 0 0 0; font-size:13px; line-height:1.5; color:#8a8a8a;">
+                Thanks for being part of {{club_name}}. Your feedback stays with the club and is never shared publicly.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f7f8f6; padding:20px 32px; border-top:1px solid #e8e8e8;">
+              <p style="margin:0; font-size:12px; color:#9a9a9a; line-height:1.5;">
+                Sent by Club Vero on behalf of {{club_name}}.<br>
+                <a href="{{unsubscribe_url}}" style="color:#9a9a9a; text-decoration:underline;">Unsubscribe from feedback requests</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

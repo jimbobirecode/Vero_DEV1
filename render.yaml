@@ -1,0 +1,90 @@
+# Render Blueprint for Vero.
+# Deploy: push this repo to GitHub, then in Render choose
+# "New +" -> "Blueprint" and point it at the repo. Render reads this file
+# and creates everything below in one pass.
+#
+# Supabase is used as the database only — nothing here runs "on" Supabase.
+# This web service and the cron jobs all connect to Supabase over the network
+# using SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, same as any other client.
+
+services:
+  # The one long-running service: API routes + serves the dashboard and
+  # survey pages as static files (see server/index.js).
+  - type: web
+    name: vero
+    runtime: node
+    plan: starter
+    buildCommand: yarn install
+    startCommand: yarn start
+    envVars:
+      - key: SUPABASE_URL
+        sync: false          # paste from Supabase project settings -> API
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false          # service_role key — never the anon key
+      - key: CLUB_ID
+        sync: false          # uuid from the outlets/club_integrations rows, single-club pilot
+      - key: SURVEY_BASE_URL
+        sync: false          # this service's own public URL, e.g. https://vero.onrender.com — set after first deploy
+      - key: CRON_SECRET
+        generateValue: true  # Render generates this; the cron jobs below reuse it automatically
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Comma-separated origins permitted to call the API cross-origin. The
+      # dashboard is same-origin so this can stay empty; set it only if a
+      # separate front end needs access.
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Sendly/SendGrid are optional here — once a club saves credentials via
+      # the Settings screen (Vault-backed), these env vars are just a
+      # pre-launch fallback. Leave unset if you'd rather only use the GUI.
+      - key: SENDLY_API_KEY
+        sync: false
+      - key: SENDLY_FROM_NUMBER
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        sync: false
+      # Dynamic template used for survey emails. Without it the survey still
+      # sends, but as plain text rather than the branded template.
+      - key: SENDGRID_TEMPLATE_ID
+        sync: false
+
+  # Daily: enforce the 12-month audit log retention policy.
+  - type: cron
+    name: vero-purge-audit-log
+    runtime: node
+    plan: starter
+    schedule: "30 4 * * *"   # 04:30 UTC, outside the survey send window
+    buildCommand: npm install
+    startCommand: >
+      curl -X POST "$SURVEY_BASE_URL/api/cron/purge-audit-log"
+      -H "x-cron-secret: $CRON_SECRET"
+    envVars:
+      - key: SURVEY_BASE_URL
+        sync: false
+      - key: CRON_SECRET
+        fromService:
+          type: web
+          name: vero
+          envVarKey: CRON_SECRET
+
+  # Weekly: Friday morning AI analysis, matching the brief's "generated Friday
+  # 6:02am" reference point.
+  - type: cron
+    name: vero-analyze-weekly
+    runtime: node
+    plan: starter
+    schedule: "0 11 * * 5"   # Fridays, 11:00 UTC
+    buildCommand: npm install
+    startCommand: >
+      curl -X POST "$SURVEY_BASE_URL/api/cron/analyze-weekly"
+      -H "x-cron-secret: $CRON_SECRET"
+    envVars:
+      - key: SURVEY_BASE_URL
+        sync: false
+      - key: CRON_SECRET
+        fromService:
+          type: web
+          name: vero
+          envVarKey: CRON_SECRET

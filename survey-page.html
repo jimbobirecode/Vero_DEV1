@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Quick Feedback</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --forest:#16302A; --ivory:#F5F2EA; --brass:#B08A4E; --brass-light:#D9BC8B;
+    --ink:#20241F; --ink-soft:#5B6259; --line:#E4DFD1;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ivory);color:var(--ink);font-family:'Inter',sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .card{background:#fff;border-radius:16px;max-width:420px;width:100%;padding:28px 24px 24px;
+        box-shadow:0 10px 30px rgba(22,48,42,0.08);}
+  .brand{font-family:'Fraunces',serif;font-size:15px;color:var(--forest);font-weight:600;letter-spacing:0.3px;}
+  .club{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+  .progress{display:flex;gap:5px;margin:18px 0 22px;}
+  .progress div{height:4px;flex:1;background:var(--line);border-radius:3px;}
+  .progress div.on{background:var(--brass);}
+  h1{font-family:'Fraunces',serif;font-size:19px;font-weight:500;margin:0 0 6px;line-height:1.35;}
+  .hint{font-size:12.5px;color:var(--ink-soft);margin-bottom:20px;}
+  .stars{display:flex;gap:8px;justify-content:center;margin:10px 0 4px;}
+  .star{font-size:36px;color:var(--line);cursor:pointer;user-select:none;transition:color .15s;}
+  .star.filled{color:var(--brass);}
+  /* 11 buttons have to fit one line on a 320px phone: fixed widths overflowed
+     and wrapped, which also pushed the end labels out of alignment. Let them
+     share whatever width is available instead. */
+  .nps-row{display:flex;gap:4px;margin:14px 0 4px;}
+  .nps-btn{flex:1 1 0;min-width:0;padding:0;height:38px;border-radius:6px;border:1px solid var(--line);background:#fff;
+           font-family:'IBM Plex Mono',monospace;font-size:13px;cursor:pointer;}
+  .nps-btn.sel{background:var(--forest);color:#fff;border-color:var(--forest);}
+  .nps-labels{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-soft);margin-top:4px;}
+  /* Narrow phones: tighten the gutters and type so "10" still sits inside its
+     button. Height stays 38px to keep a comfortable tap target. */
+  @media (max-width:400px){
+    .card{padding:24px 16px 20px;}
+    .nps-row{gap:3px;}
+    .nps-btn{font-size:12px;}
+  }
+  @media (max-width:340px){
+    .nps-row{gap:2px;}
+    .nps-btn{font-size:11px;}
+  }
+  textarea{width:100%;min-height:110px;border:1px solid var(--line);border-radius:10px;padding:12px;
+           font-family:'Inter',sans-serif;font-size:13.5px;resize:vertical;}
+  .charcount{text-align:right;font-size:10.5px;color:var(--ink-soft);margin-top:4px;}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:22px;}
+  .btn{background:var(--forest);color:#fff;border:none;padding:11px 20px;border-radius:8px;
+       font-weight:600;font-size:13.5px;cursor:pointer;font-family:'Inter',sans-serif;}
+  .btn:disabled{opacity:0.4;cursor:default;}
+  .skip{background:none;border:none;color:var(--ink-soft);font-size:12.5px;cursor:pointer;text-decoration:underline;}
+  .done{text-align:center;padding:20px 0;}
+  .done .mark{font-family:'Fraunces',serif;font-size:22px;color:var(--forest);}
+  .done p{font-size:13.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="brand">Vero</div>
+  <div class="club" id="surveyClubName"></div>
+  <div class="progress" id="progress"></div>
+  <div id="steps"></div>
+</div>
+
+<script>
+const answers = {};
+let step = 0;
+
+(async function(){
+  try {
+    const r = await fetch('/api/club-config');
+    if(r.ok){
+      const c = await r.json();
+      const el = document.getElementById('surveyClubName');
+      if(el) el.textContent = c.club_name || '';
+      document.title = (c.club_name || 'Quick') + ' — Quick Feedback';
+    }
+  } catch(_){}
+})();
+
+// Default questions — used when no template is attached to the survey response.
+// When a template IS attached, the API returns its questions and we use those instead.
+let questions = [
+  { key:'q1', title:'How likely are you to recommend us to a friend or colleague?', hint:'0 = Not at all likely, 10 = Extremely likely', type:'nps', required:true },
+  { key:'q2', title:'How would you rate the service today?', hint:'1 = Poor, 5 = Excellent', type:'stars', required:true },
+  { key:'q3', title:'How would you rate the food quality?', hint:'1 = Poor, 5 = Excellent', type:'stars', required:true },
+  { key:'q4', title:'How would you rate the overall atmosphere?', hint:'1 = Poor, 5 = Excellent · optional', type:'stars', required:false },
+  { key:'q5', title:'Anything you\'d like us to know?', hint:'Optional — 500 characters max', type:'text', required:false }
+];
+
+function renderProgress(){
+  const p = document.getElementById('progress');
+  p.innerHTML = questions.map((_,i)=>`<div class="${i<=step?'on':''}"></div>`).join('');
+}
+
+function render(){
+  renderProgress();
+  const q = questions[step];
+  const container = document.getElementById('steps');
+
+  if(step >= questions.length){
+    container.innerHTML = `<div class="done"><div class="mark">Thank you.</div>
+      <p>Your feedback goes straight to the team who can act on it — not into a spreadsheet no one reads.</p></div>`;
+    return;
+  }
+
+  let body = '';
+  if(q.type === 'stars'){
+    body = `<div class="stars" id="starsRow">${[1,2,3,4,5].map(n=>`<span class="star" data-n="${n}">★</span>`).join('')}</div>`;
+  } else if(q.type === 'nps'){
+    body = `<div class="nps-row">${Array.from({length:11},(_,n)=>`<button class="nps-btn" data-n="${n}">${n}</button>`).join('')}</div>
+            <div class="nps-labels"><span>Not likely</span><span>Extremely likely</span></div>`;
+  } else if(q.type === 'text'){
+    body = `<textarea id="commentBox" maxlength="500" placeholder="Type here..."></textarea>
+            <div class="charcount"><span id="cc">0</span>/500</div>`;
+  }
+
+  container.innerHTML = `
+    <h1>${q.title}</h1>
+    <div class="hint">${q.hint}</div>
+    ${body}
+    <div class="actions">
+      ${!q.required ? `<button class="skip" onclick="next()">Skip</button>` : `<span></span>`}
+      <button class="btn" id="nextBtn" ${q.required?'disabled':''} onclick="next()">${step===questions.length-1?'Submit':'Next'}</button>
+    </div>`;
+
+  if(q.type === 'stars'){
+    document.querySelectorAll('#starsRow .star').forEach(el=>{
+      el.addEventListener('click',()=>{
+        const n = +el.dataset.n;
+        answers[q.key] = n;
+        document.querySelectorAll('#starsRow .star').forEach(s=>s.classList.toggle('filled', +s.dataset.n<=n));
+        document.getElementById('nextBtn').disabled = false;
+      });
+    });
+  } else if(q.type === 'nps'){
+    document.querySelectorAll('.nps-btn').forEach(el=>{
+      el.addEventListener('click',()=>{
+        answers[q.key] = +el.dataset.n;
+        document.querySelectorAll('.nps-btn').forEach(b=>b.classList.remove('sel'));
+        el.classList.add('sel');
+        document.getElementById('nextBtn').disabled = false;
+      });
+    });
+  } else if(q.type === 'text'){
+    const box = document.getElementById('commentBox');
+    box.addEventListener('input',()=>{
+      answers.q5 = box.value;
+      document.getElementById('cc').textContent = box.value.length;
+    });
+  }
+}
+
+function next(){
+  step++;
+  if(step >= questions.length){
+    submitSurvey();
+  } else {
+    render();
+  }
+}
+
+// Token comes from the URL path itself — this page is served at /s/<token>
+// by the backend (see server/index.js), so no token needs to be hardcoded
+// or passed in some other way.
+const SURVEY_TOKEN = window.location.pathname.split('/').filter(Boolean).pop();
+
+async function submitSurvey(){
+  render();
+  try {
+    const res = await fetch(`/api/survey-response/${SURVEY_TOKEN}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        q1_nps: answers.q1 ?? null,
+        q2_overall_stars: answers.q2 ?? null,
+        q3_food_stars: answers.q3 ?? null,
+        q4_service_stars: answers.q4 ?? null,
+        q5_comment: answers.q5 || null,
+        answers
+      })
+    });
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:'Something went wrong submitting your feedback.'}));
+      showSubmitError(err.error);
+    }
+  } catch(e){
+    showSubmitError("Couldn't reach the server — your feedback wasn't saved. Please try the link again.");
+  }
+}
+
+function showSubmitError(message){
+  document.getElementById('steps').innerHTML = `<div class="done">
+    <div class="mark" style="color:var(--brick,#9C4A34);">Not submitted</div>
+    <p>${message}</p>
+  </div>`;
+}
+
+// On load: confirm the token is real and not already used, before letting
+// the guest fill anything out. A stale/reused/invalid link shows a clear
+// message instead of a broken form.
+async function checkTokenAndStart(){
+  try {
+    const res = await fetch(`/api/survey-response/${SURVEY_TOKEN}`);
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:'This survey link is no longer valid.'}));
+      showSubmitError(err.error);
+      return;
+    }
+    const data = await res.json();
+    if(data.template && Array.isArray(data.template.questions) && data.template.questions.length){
+      questions = data.template.questions;
+    }
+    questions.forEach(q => { answers[q.key] = q.type === 'text' ? '' : null; });
+    render();
+  } catch(e){
+    questions.forEach(q => { answers[q.key] = q.type === 'text' ? '' : null; });
+    render();
+  }
+}
+
+checkTokenAndStart();
+</script>
+</body>
+</html>

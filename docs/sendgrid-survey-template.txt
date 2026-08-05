@@ -1,0 +1,14 @@
+{{#if first_name}}{{first_name}}, how{{else}}How{{/if}} was your experience{{#if outlet_name}} at {{outlet_name}}{{/if}}?
+
+We'd love to hear about your experience. It only takes 30 seconds, and your
+feedback helps us keep things running smoothly for every member.
+
+Share your feedback here:
+{{survey_url}}
+
+Thanks for being part of {{club_name}}. Your feedback stays with the club and
+is never shared publicly.
+
+--
+Sent by Club Vero on behalf of {{club_name}}.
+To stop receiving feedback requests: {{unsubscribe_url}}
