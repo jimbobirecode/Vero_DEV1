@@ -257,7 +257,7 @@ function startDigestScheduler() {
 
       if (url) body += `View dashboard: ${url}\n`;
 
-      const subject = `[Vero] Daily Digest: ${alertCount} unassigned, ${overdueCount} overdue, ${approvalCount} awaiting sign-off`;
+      const subject = `[Club Vero] Daily Digest: ${alertCount} unassigned, ${overdueCount} overdue, ${approvalCount} awaiting sign-off`;
       const results = await notifyManagers(subject, body);
       console.log("[digest] Sent to", results.length, "manager(s)");
     } catch (err) {

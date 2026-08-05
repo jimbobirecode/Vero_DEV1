@@ -78,7 +78,7 @@ router.post("/daily-digest", async (req, res) => {
       body += `View dashboard: ${url}\n`;
     }
 
-    const subject = `[Vero] Daily Digest: ${alertCount} unassigned alert${alertCount !== 1 ? "s" : ""}, ${overdueCount} overdue, ${approvalCount} awaiting sign-off`;
+    const subject = `[Club Vero] Daily Digest: ${alertCount} unassigned alert${alertCount !== 1 ? "s" : ""}, ${overdueCount} overdue, ${approvalCount} awaiting sign-off`;
 
     const results = await notifyManagers(subject, body);
     res.json({ sent: true, alerts: alertCount, overdue: overdueCount, awaiting_approval: approvalCount, notifications: results });

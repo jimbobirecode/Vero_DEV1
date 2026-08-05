@@ -160,7 +160,7 @@ router.post("/:token", async (req, res) => {
     if (severity === "high" || severity === "medium") {
       const url = dashboardUrl();
       const sevLabel = severity.toUpperCase();
-      const subject = `[Vero] ${sevLabel} alert — ${aiSummary || "immediate attention needed"}`;
+      const subject = `[Club Vero] ${sevLabel} alert — ${aiSummary || "immediate attention needed"}`;
       let body = `A ${severity} severity alert has been auto-created.\n\n`;
       if (aiSummary) body += `Summary: ${aiSummary}\n\n`;
       body += `NPS: ${q1_nps}/10\nOverall: ${q2_overall_stars}/5\nFood: ${q3_food_stars}/5\nService: ${q4_service_stars ?? "N/A"}/5`;

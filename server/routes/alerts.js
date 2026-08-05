@@ -79,7 +79,7 @@ router.put("/:id/assign", async (req, res) => {
 
     const outlet = alert?.outlets?.name || "Unknown outlet";
     const url = dashboardUrl();
-    const subject = `[Vero] ${alert?.severity?.toUpperCase()} alert assigned to you — ${outlet}`;
+    const subject = `[Club Vero] ${alert?.severity?.toUpperCase()} alert assigned to you — ${outlet}`;
     const body = `Hi ${staffName},\n\nA ${alert?.severity} severity alert at ${outlet} has been assigned to you.\n\nPlease review and resolve it at your earliest convenience.${url ? `\n\nView in dashboard: ${url}` : ""}\n\n${CLUB_NAME}`;
 
     notifyStaffMember(staffId, subject, body).catch((e) =>

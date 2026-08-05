@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Quick Feedback</title>
+<link rel="icon" href="/assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/assets/clubvero-favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+<meta name="theme-color" content="#16302A">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -16,7 +20,8 @@
        min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
   .card{background:#fff;border-radius:16px;max-width:420px;width:100%;padding:28px 24px 24px;
         box-shadow:0 10px 30px rgba(22,48,42,0.08);}
-  .brand{font-family:'Fraunces',serif;font-size:15px;color:var(--forest);font-weight:600;letter-spacing:0.3px;}
+  /* Horizontal lockup at 132px — above the 120px minimum on the brand sheet. */
+  .brand img{display:block;width:132px;max-width:60%;height:auto;}
   .club{font-size:12px;color:var(--ink-soft);margin-top:2px;}
   .progress{display:flex;gap:5px;margin:18px 0 22px;}
   .progress div{height:4px;flex:1;background:var(--line);border-radius:3px;}
@@ -60,7 +65,7 @@
 </head>
 <body>
 <div class="card" id="card">
-  <div class="brand">Vero</div>
+  <div class="brand"><img src="/assets/clubvero-logo-horizontal.svg" alt="Club Vero" width="132" height="32"></div>
   <div class="club" id="surveyClubName"></div>
   <div class="progress" id="progress"></div>
   <div id="steps"></div>

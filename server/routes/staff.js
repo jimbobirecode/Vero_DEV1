@@ -613,7 +613,7 @@ router.patch("/tasks/:id", async (req, res) => {
 
     if (completed && data) {
       const url = dashboardUrl();
-      const subject = `[Vero] Task completed — awaiting your sign-off`;
+      const subject = `[Club Vero] Task completed — awaiting your sign-off`;
       const body = `A task has been marked as completed and needs your approval.\n\nServer: ${data.server_name}\nTask: ${data.title}\nCategory: ${data.category}\n\nPlease review and sign off on this task.${url ? `\n\nView in dashboard: ${url}` : ""}\n\n${CLUB_NAME}`;
       notifyManagers(subject, body).catch((e) =>
         console.error("Task completion notification failed:", e.message)
