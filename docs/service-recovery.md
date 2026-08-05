@@ -26,6 +26,7 @@ what to say, and it is still advisory only.
 | Queue, stats, outreach and the resolve gate | `server/routes/alerts.js` |
 | One-tap logging from a phone | `server/routes/recovery-log.js`, mounted at `/c` |
 | Hourly escalation | `POST /api/cron/recovery-sweep`, `render.yaml` |
+| Resolution capture and reporting | `case_resolutions`, `migrations/case-resolutions.sql` |
 | Schema | `migrations/service-recovery.sql` |
 
 Run `migrations/service-recovery.sql` before deploying. Until it runs, the
@@ -85,6 +86,36 @@ neither flatter nor punish the number.
 
 Reopening leaves any logged contact on the record — reopening means the fix was
 not good enough, not that the call never happened.
+
+## What was done about it
+
+Closing a case used to record a timestamp and nothing else. A club could work
+through a year of alerts and afterwards answer none of the questions that make
+the work worth doing. Every resolution now records:
+
+- **What went wrong** — `root_cause`, a closed list.
+- **What was done** — `action_taken`, a closed list.
+- **What it cost** — `goodwill_type` and `goodwill_amount`, optional.
+- **Notes**, and who closed it.
+
+Both lists are closed rather than free text because the point is to count them:
+a free-text box answers the question for one case and for no others. Both are
+required — an optional field on a form people are trying to get past is an
+empty field.
+
+`case_resolutions` is an event table, like `alert_outreach`, not a set of
+columns on `case_alerts`. A case can be resolved, reopened because the fix did
+not hold, and resolved again; overwriting would erase the first attempt, which
+is exactly the record you want when something recurs. Reopening marks the
+resolution superseded rather than deleting it, and a partial unique index
+enforces one live resolution per case.
+
+`GET /api/alerts/resolution-stats?days=90` rolls this into what keeps going
+wrong, what the club keeps doing about it, and what that costs. Superseded
+resolutions are excluded — a fix that did not hold should not be counted
+alongside the one that replaced it. The average spend is over the cases that
+actually cost something, not over every case, or the figure would describe how
+often the club spends rather than how much.
 
 ## The three numbers
 

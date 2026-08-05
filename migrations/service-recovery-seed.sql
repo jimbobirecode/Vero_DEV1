@@ -1,6 +1,7 @@
 -- Demo seed for service recovery.
 --
--- Run AFTER: schema.sql (or bring-up-to-date.sql), then service-recovery.sql.
+-- Run AFTER: schema.sql (or bring-up-to-date.sql), then service-recovery.sql,
+-- then case-resolutions.sql.
 -- Needs case_alerts.ai_summary and .assigned_to_staff_id, which come from
 -- bring-up-to-date.sql, and the recovery columns from service-recovery.sql.
 --
@@ -63,6 +64,11 @@ if v_outlets = 0 then
 end if;
 
 -- ---------------------------------------------------------------- teardown --
+delete from case_resolutions where alert_id in (
+  select ca.alert_id from case_alerts ca
+    join survey_responses sr on sr.response_id = ca.response_id
+   where sr.survey_token like 'demo-recovery-%');
+
 delete from alert_outreach where alert_id in (
   select ca.alert_id from case_alerts ca
     join survey_responses sr on sr.response_id = ca.response_id
@@ -107,7 +113,11 @@ create temp table demo_recovery_cases (
   nps smallint, overall smallint, food smallint, service smallint, comment text,
   assigned_to text, contact_hours numeric, reached boolean, sentiment text,
   call_note text, prior_attempt boolean, follow_up_nps smallint,
-  no_contact text, resolved boolean
+  no_contact text, resolved boolean,
+  -- What the case was found to be and what was done about it, for the cases
+  -- that have been closed. Null on anything still open.
+  root_cause text, action_taken text, goodwill_type text,
+  goodwill_amount numeric(10,2), resolution_note text
 ) on commit drop;
 
 insert into demo_recovery_cases values
@@ -115,51 +125,51 @@ insert into demo_recovery_cases values
 -- Overdue: the window closed six hours ago and nobody has rung him.
 ('DEMO_1042',1,'high',   30, 2,1,1,2,
  'Waited fifty minutes for a main that came out cold. Nobody checked on us all night.',
- 'Sarah Kim',   null, null, null, null, false, null, null, false),
+ 'Sarah Kim',   null, null, null, null, false, null, null, false, null, null, null, null, null),
 -- Two hours left. One try already made — wrong number on file, so the clock
 -- is still running, which is exactly the case the rule exists for.
 ('DEMO_0876',2,'high',            22, 3,2,3,1,
  'Bar staff were short with my guests. Embarrassing in front of clients.',
- 'Tom Reyes',   null, null, null, null, true,  null, null, false),
+ 'Tom Reyes',   null, null, null, null, true,  null, null, false, null, null, null, null, null),
 -- Past halfway through a 72-hour window.
 ('DEMO_1155',3,'medium',    40, 5,2,3,3,
  'Course was fine but the halfway house was unstaffed for over an hour.',
- 'Priya Anand', null, null, null, null, false, null, null, false),
+ 'Priya Anand', null, null, null, null, false, null, null, false, null, null, null, null, null),
 -- Fresh, and nobody can ring him: no phone, no email.
 ('DEMO_W135',1,'medium',  9, 4,2,2,2,
  'Our booking was lost. We ended up eating in the bar.',
- null,          null, null, null, null, false, null, null, false),
+ null,          null, null, null, null, false, null, null, false, null, null, null, null, null),
 
 -- ===== RECOVERED — called back fast, came back happier =====================
 ('DEMO_2201',1,'high',  38*24, 2,1,2,1,
  'The lamb was inedible and the waiter argued with me about it.',
- 'Sarah Kim',    2.5, true,  'recovered',    'Apologised, comped the meal, invited her back as my guest.', false,  9, null, true),
+ 'Sarah Kim',    2.5, true,  'recovered',    'Apologised, comped the meal, invited her back as my guest.', false,  9, null, true, 'food_quality', 'coached_staff', 'comped_visit', 84.00, 'Chef reviewed the section. Comped the table.'),
 ('DEMO_2318',2,'high',           31*24, 3,2,2,2,
  'Third time this month the patio has run out of the house red.',
- 'Tom Reyes',    4.0, true,  'recovered',    'Explained the supplier issue, put a case aside for him.',    false, 10, null, true),
+ 'Tom Reyes',    4.0, true,  'recovered',    'Explained the supplier issue, put a case aside for him.',    false, 10, null, true, 'food_availability', 'supplier_or_stock', null, null, 'Standing order raised with the wine supplier.'),
 ('DEMO_2456',3,'medium',   24*24, 5,2,3,3,
  'Towels were not restocked and the loungers were filthy by midday.',
- 'Priya Anand',  6.5, true,  'neutral',      'Heard her out. Poolside rota changed from Monday.',          false,  8, null, true),
+ 'Priya Anand',  6.5, true,  'neutral',      'Heard her out. Poolside rota changed from Monday.',          false,  8, null, true, 'cleanliness', 'process_changed', null, null, 'Poolside now checked hourly, logged at the desk.'),
 -- Two attempts before he answered, and still angry on the call — recovery is
 -- not automatic, and the record should show that.
 ('DEMO_2519',1,'high',  19*24, 1,1,1,1,
  'Sent back twice. Nobody apologised. We left without eating.',
- 'Sarah Kim',    1.5, true,  'still_unhappy','Long call. Still angry. Offered dinner with the chef.',      true,   7, null, true),
+ 'Sarah Kim',    1.5, true,  'still_unhappy','Long call. Still angry. Offered dinner with the chef.',      true,   7, null, true, 'food_quality', 'coached_staff', 'comped_visit', 120.00, 'Two covers comped. Kitchen and floor both spoken to.'),
 ('DEMO_2604',2,'medium',         14*24, 4,2,3,2,
  'Slow service at the turn, we missed our tee time.',
- 'Tom Reyes',    9.0, true,  'recovered',    'Starter now holds tee times when the turn backs up.',        false,  9, null, true),
+ 'Tom Reyes',    9.0, true,  'recovered',    'Starter now holds tee times when the turn backs up.',        false,  9, null, true, 'service_speed', 'process_changed', null, null, 'Starter holds tee times when the turn backs up.'),
 
 -- ===== CALLED BACK, BUT NOT RECOVERED =====================================
 -- Rang him quickly, he still rated the club lower next visit. The metric has
 -- to be able to show this or nobody will believe the good numbers.
 ('DEMO_2733',1,'medium', 11*24, 4,2,2,3,
  'Music far too loud to hold a conversation.',
- 'Priya Anand',  3.0, true,  'neutral',      'Took the point. Volume policy reviewed.',                    false,  3, null, true),
+ 'Priya Anand',  3.0, true,  'neutral',      'Took the point. Volume policy reviewed.',                    false,  3, null, true, 'facility', 'process_changed', null, null, 'Volume capped after 7pm in the dining room.'),
 
 -- ===== VOICEMAIL ONLY — clock stopped, but this is not recovery ============
 ('DEMO_2201',2,'medium',          8*24, 5,3,3,3,
  'Burger was dry and the chips were cold.',
- 'Tom Reyes',    5.0, false, null,           'Left a voicemail asking her to call back.',                  true,  null, null, false),
+ 'Tom Reyes',    5.0, false, null,           'Left a voicemail asking her to call back.',                  true,  null, null, false, null, null, null, null, null),
 
 -- ===== CALLED BACK TOO LATE ===============================================
 -- Counts as contacted, but not as contacted in time. Has to be high severity
@@ -167,16 +177,16 @@ insert into demo_recovery_cases values
 -- hours would be comfortably inside it.
 ('DEMO_2318',3,'high',     16*24, 4,2,2,2,
  'Pool bar closed early with no notice, twice in a week.',
- 'Priya Anand', 38.0, true,  'neutral',      'Late call. Fair about it, but he had already told friends.', false,  6, null, true),
+ 'Priya Anand', 38.0, true,  'neutral',      'Late call. Fair about it, but he had already told friends.', false,  6, null, true, 'service_attitude', 'coached_staff', 'comped_item', 22.50, 'Late call. Bar staff coached, drinks comped.'),
 
 -- ===== CLOSED WITHOUT CONTACT, WITH A STATED REASON =======================
 -- These leave the denominator: they neither flatter nor punish the number.
 ('DEMO_2456',2,'low',            26*24, 6,3,3,3,
  'Car park was full at 8am on a Saturday.',
- 'Tom Reyes',   null, null, null, null, false, null, 'not_member_specific', true),
+ 'Tom Reyes',   null, null, null, null, false, null, 'not_member_specific', true, 'member_expectation', 'explained_only', null, null, 'Car park capacity — nothing to fix, noted for the committee.'),
 ('DEMO_2519',3,'low',      21*24, 6,3,4,3,
  'Nothing wrong exactly, just not what it used to be.',
- 'Sarah Kim',   null, null, null, null, false, null, 'member_declined',     true);
+ 'Sarah Kim',   null, null, null, null, false, null, 'member_declined',     true, 'member_expectation', 'explained_only', null, null, 'General sentiment rather than a specific incident.');
 
 -- ------------------------------------------------- resolved once, reused ---
 -- The clock, the contact time and the escalation stage are worked out once
@@ -276,6 +286,22 @@ select a.alert_id, a.member_id, 'phone',
   left join staff st on st.name = a.assigned_to
  where a.contact_at is not null;
 
+-- --------------------------------------------------------- resolutions --
+-- What was found and what was done, for the cases that have been closed. The
+-- live queue has none: those are still open, which is the point of them.
+insert into case_resolutions (
+  alert_id, root_cause, action_taken, notes, goodwill_type, goodwill_amount,
+  contacted_member, no_contact_reason, resolved_by, resolved_by_name, resolved_at)
+select a.alert_id, a.root_cause, a.action_taken, a.resolution_note,
+       a.goodwill_type, a.goodwill_amount,
+       a.contact_at is not null,
+       case when a.contact_at is null then a.no_contact end,
+       st.staff_id, coalesce(a.assigned_to, 'Sarah Kim'),
+       coalesce(a.contact_at + interval '2 days', a.created_at + interval '1 day')
+  from demo_recovery_alerts a
+  left join staff st on st.name = a.assigned_to
+ where a.resolved and a.root_cause is not null;
+
 -- ------------------------------------------------------- the return visit --
 -- The proof behind "rated us higher after". Dated a week AFTER the call, never
 -- before it — a response submitted before the call is the one that raised the
@@ -336,6 +362,10 @@ select
 -- ---------------------------------------------------------------- teardown --
 -- Removes every row this file created, and nothing else.
 --
+--   delete from case_resolutions where alert_id in (
+--     select ca.alert_id from case_alerts ca
+--       join survey_responses sr on sr.response_id = ca.response_id
+--      where sr.survey_token like 'demo-recovery-%');
 --   delete from alert_outreach where alert_id in (
 --     select ca.alert_id from case_alerts ca
 --       join survey_responses sr on sr.response_id = ca.response_id

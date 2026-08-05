@@ -8,8 +8,8 @@
 process.env.SUPABASE_URL = "https://p";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "s";
 
-let ALERTS = [], OUTREACH = [], SETTINGS = [], RESPONSES = [];
-const WRITES = { alert_outreach: [], case_alerts: [] };
+let ALERTS = [], OUTREACH = [], SETTINGS = [], RESPONSES = [], RESOLUTIONS = [];
+const WRITES = { alert_outreach: [], case_alerts: [], case_resolutions: [] };
 
 const Module = require("module");
 const rr = Module._resolveFilename;
@@ -19,7 +19,7 @@ Module._resolveFilename = function (r, ...x) {
 };
 
 function tableData(table) {
-  return { case_alerts: ALERTS, alert_outreach: OUTREACH, club_settings: SETTINGS, survey_responses: RESPONSES }[table] || [];
+  return { case_alerts: ALERTS, alert_outreach: OUTREACH, club_settings: SETTINGS, survey_responses: RESPONSES, case_resolutions: RESOLUTIONS }[table] || [];
 }
 
 function from(table) {
@@ -33,20 +33,32 @@ function from(table) {
     single: () => Promise.resolve({ data: rows()[0] || null, error: null }),
     insert: (row) => {
       WRITES[table]?.push({ op: "insert", row });
-      const stored = { outreach_id: "o" + (OUTREACH.length + 1), ...row };
+      const stored = { outreach_id: "o" + (OUTREACH.length + 1), resolution_id: "r" + (RESOLUTIONS.length + 1), ...row };
       if (table === "alert_outreach") OUTREACH.push(stored);
+      if (table === "case_resolutions") RESOLUTIONS.push(stored);
       return {
         select: () => ({ single: () => Promise.resolve({ data: stored, error: null }) }),
         then: (res) => res({ data: stored, error: null }),
       };
     },
+    // Filters can be added after update(), and in any order — .eq().is() is
+    // what supersedeResolution builds. The write is applied on await, once
+    // every filter has been collected, rather than on each chained call.
     update: (patch) => {
-      const target = eqs.find(([c]) => c.endsWith("_id"));
-      WRITES[table]?.push({ op: "update", patch, where: target });
-      for (const row of tableData(table)) {
-        if (eqs.every(([c, v]) => String(row[c]) === String(v))) Object.assign(row, patch);
-      }
-      return { eq: (c, v) => { eqs.push([c, v]); return api.update(patch); }, then: (res) => res({ error: null }) };
+      const chain = {
+        eq: (c, v) => { eqs.push([c, v]); return chain; },
+        is: (c, v) => { eqs.push([c, v]); return chain; },
+        then: (res) => {
+          WRITES[table]?.push({ op: "update", patch, where: [...eqs] });
+          for (const row of tableData(table)) {
+            const matches = eqs.every(([c, v]) =>
+              v === null ? (row[c] === null || row[c] === undefined) : String(row[c]) === String(v));
+            if (matches) Object.assign(row, patch);
+          }
+          return res({ error: null });
+        },
+      };
+      return chain;
     },
     then: (res) => res({ data: rows(), error: null }),
   };
@@ -84,9 +96,9 @@ const baseAlert = (over = {}) => ({
 
 const reset = () => {
   ALERTS = [baseAlert()];
-  OUTREACH = []; RESPONSES = [];
+  OUTREACH = []; RESPONSES = []; RESOLUTIONS = [];
   SETTINGS = [{ key: "recovery_sla_high_minutes", value: "1440" }];
-  WRITES.alert_outreach = []; WRITES.case_alerts = [];
+  WRITES.alert_outreach = []; WRITES.case_alerts = []; WRITES.case_resolutions = [];
   store.resetReadyCache();
 };
 
@@ -203,6 +215,48 @@ const reset = () => {
   reset();
   check("members never reached are not counted",
     (await store.followUpScores([{ alert_id: "a2", member_id: "M2", created_at: iso(T0), first_reached_at: null }])).size, 0);
+
+  // ------------------------------------------------------- resolution ---
+
+  reset();
+  const { alert: ra } = await store.alertForRecovery("a1");
+  const contacted = { ...ra, first_contact_at: iso(T0 + 2 * H) };
+
+  const savedRes = await store.saveResolution(contacted,
+    { root_cause: "service_speed", action_taken: "coached_staff",
+      notes: "Spoke to the section. Extra cover on Fridays.",
+      goodwill_type: "comped_visit", goodwill_amount: 84.5 },
+    { staff_id: "s1", name: "Sarah Kim" });
+
+  check("the resolution saves", savedRes.error || null, null);
+  const rrow = WRITES.case_resolutions[0].row;
+  check("it records what went wrong", rrow.root_cause, "service_speed");
+  check("and what was done", rrow.action_taken, "coached_staff");
+  check("and what it cost", rrow.goodwill_amount, 84.5);
+  check("and who closed it", rrow.resolved_by_name, "Sarah Kim");
+  // Snapshotted at the time of closing, so a later call cannot rewrite the
+  // record of whether the loop was closed when the decision was made.
+  check("it snapshots that the member had been contacted", rrow.contacted_member, true);
+  check("so no no-contact reason is stored", rrow.no_contact_reason, null);
+
+  // Closing without contact stores the reason instead.
+  reset();
+  const { alert: ra2 } = await store.alertForRecovery("a1");
+  await store.saveResolution(ra2,
+    { root_cause: "member_expectation", action_taken: "explained_only", no_contact_reason: "member_declined" },
+    { name: "Tom Reyes" });
+  check("an uncontacted case records that", WRITES.case_resolutions[0].row.contacted_member, false);
+  check("with the reason", WRITES.case_resolutions[0].row.no_contact_reason, "member_declined");
+
+  // Reopening supersedes rather than deletes: when the same complaint comes
+  // back, what was tried last time is the most useful thing on file.
+  reset();
+  RESOLUTIONS = [{ resolution_id: "r1", alert_id: "a1", root_cause: "service_speed",
+                   action_taken: "coached_staff", superseded_at: null }];
+  await store.supersedeResolution("a1");
+  check("reopening marks the resolution superseded",
+    Boolean(WRITES.case_resolutions[0].patch.superseded_at), true);
+  check("it does not delete it", RESOLUTIONS.length, 1);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

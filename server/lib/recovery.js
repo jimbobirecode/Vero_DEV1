@@ -26,6 +26,131 @@ const NO_CONTACT_REASONS = {
   duplicate: "Duplicate of another alert",
 };
 
+// ------------------------------------------------------------ resolution ----
+//
+// Closing a case used to record a timestamp and nothing else, so the club kept
+// no account of what had actually gone wrong or what it did about it. A year
+// of alerts resolved that way answers no question worth asking.
+//
+// Two closed lists rather than one free-text box, because these are the two
+// different things a manager knows at the point of closing, and only a closed
+// list can be counted: what went wrong, and what was done. Both are required —
+// an optional field on a form people are trying to get past is an empty field.
+
+const ROOT_CAUSES = {
+  service_speed: "Slow service",
+  service_attitude: "Staff manner or attentiveness",
+  food_quality: "Food or drink quality",
+  food_availability: "Ran out / not available",
+  cleanliness: "Cleanliness or upkeep",
+  booking_error: "Booking or reservation error",
+  billing_error: "Billing error",
+  facility: "Facility or equipment",
+  staffing_level: "Understaffed at the time",
+  member_expectation: "Nothing went wrong — expectation mismatch",
+  other: "Something else",
+};
+
+const ACTIONS_TAKEN = {
+  coached_staff: "Coached the staff involved",
+  staffing_changed: "Changed the rota or staffing",
+  process_changed: "Changed a process",
+  supplier_or_stock: "Supplier or stock fixed",
+  facility_fixed: "Facility repaired or replaced",
+  billing_corrected: "Corrected the billing",
+  goodwill_only: "Goodwill gesture, no underlying fix needed",
+  explained_only: "Explained, nothing to change",
+  no_action: "No action taken",
+};
+
+// What the recovery cost. Optional — plenty of cases are fixed with a phone
+// call — but where a club does spend, it should be able to add it up.
+const GOODWILL_TYPES = {
+  none: "Nothing",
+  comped_item: "Comped an item",
+  comped_visit: "Comped the visit",
+  account_credit: "Credited their account",
+  gift: "Gift or gesture",
+  other: "Something else",
+};
+
+function validateResolution(body = {}, { requireNoContactReason = false } = {}) {
+  const errors = [];
+  if (!ROOT_CAUSES[body.root_cause]) errors.push("root_cause is required");
+  if (!ACTIONS_TAKEN[body.action_taken]) errors.push("action_taken is required");
+
+  if (body.goodwill_type && !GOODWILL_TYPES[body.goodwill_type]) {
+    errors.push("goodwill_type is not recognised");
+  }
+  const spend = body.goodwill_amount === "" || body.goodwill_amount == null
+    ? null : Number(body.goodwill_amount);
+  if (spend !== null && (!Number.isFinite(spend) || spend < 0)) {
+    errors.push("goodwill_amount must be a positive number");
+  }
+  // An amount against "nothing" is a contradiction, and it would quietly
+  // inflate the cost-of-recovery total.
+  if (spend && (!body.goodwill_type || body.goodwill_type === "none")) {
+    errors.push("goodwill_amount needs a goodwill_type");
+  }
+  if (body.notes && String(body.notes).length > 2000) {
+    errors.push("notes must be 2000 characters or fewer");
+  }
+  if (requireNoContactReason && !NO_CONTACT_REASONS[body.no_contact_reason]) {
+    errors.push("no_contact_reason is required when the member was never contacted");
+  }
+
+  return {
+    ok: !errors.length,
+    errors,
+    resolution: {
+      root_cause: body.root_cause,
+      action_taken: body.action_taken,
+      notes: body.notes ? String(body.notes).slice(0, 2000) : null,
+      goodwill_type: body.goodwill_type || null,
+      goodwill_amount: spend,
+    },
+  };
+}
+
+// Rolls a set of resolutions into the shape the reporting screen wants: what
+// keeps going wrong, what the club keeps doing about it, and what that costs.
+function resolutionSummary(resolutions = []) {
+  const tally = (key, labels) => {
+    const counts = new Map();
+    for (const r of resolutions) {
+      const k = r[key];
+      if (!k) continue;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([k, count]) => ({
+        key: k,
+        label: labels[k] || k,
+        count,
+        pct: Math.round((count / resolutions.length) * 100),
+      }))
+      .sort((a, b) => b.count - a.count);
+  };
+
+  const spends = resolutions
+    .map((r) => Number(r.goodwill_amount))
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  return {
+    resolved: resolutions.length,
+    root_causes: tally("root_cause", ROOT_CAUSES),
+    actions_taken: tally("action_taken", ACTIONS_TAKEN),
+    goodwill_cases: spends.length,
+    goodwill_total: spends.length ? Math.round(spends.reduce((a, b) => a + b, 0) * 100) / 100 : 0,
+    // Averaged over the cases that actually cost something, not over every
+    // case — most are fixed with a phone call, and including those would make
+    // the figure describe how often the club spends rather than how much.
+    goodwill_average: spends.length
+      ? Math.round((spends.reduce((a, b) => a + b, 0) / spends.length) * 100) / 100
+      : null,
+  };
+}
+
 // Only 'reached' means a conversation happened. The others are attempts, and
 // the distinction matters: a club that leaves 40 voicemails has not recovered
 // 40 members, and a metric that says it has will be believed once and then
@@ -273,6 +398,7 @@ function formatRemaining(ms) {
 
 module.exports = {
   SLA_DEFAULTS, CHANNELS, OUTCOMES, SENTIMENTS, NO_CONTACT_REASONS,
+  ROOT_CAUSES, ACTIONS_TAKEN, GOODWILL_TYPES, validateResolution, resolutionSummary,
   isConnected, isAttempt, slaMinutes, contactDueAt, slaState, escalationStage,
   canResolve, validateOutreach, alertPatchForOutreach, recoveryMetrics,
   queueRank, formatRemaining,
