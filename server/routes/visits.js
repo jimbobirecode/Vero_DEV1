@@ -6,7 +6,8 @@ const { PDFParse } = require("pdf-parse");
 const { readFirstSheet } = require("../lib/xlsx-read");
 const crypto = require("crypto");
 const { loadCredentials, sendSms, sendEmail } = require("../lib/senders");
-const posParse = require("../lib/pos-parse");
+const pos = require("../lib/pos");
+const { ingestRows } = require("../lib/pos/ingest");
 const { CLUB_NAME } = require("../lib/club-config");
 const { resolveRecipient } = require("../lib/recipient");
 
@@ -303,390 +304,50 @@ router.get("/outlets", async (req, res) => {
   res.json(data);
 });
 
-// POST /api/visits/upload — bulk upload POS end-of-shift report
-// Expects JSON: { rows: [{ member_id, outlet_name, spend_amount, visit_date, server_name }] }
-// The frontend parses the CSV and sends structured JSON — same pattern as /api/members/import.
+// POST /api/visits/upload — bulk upload already-parsed POS rows as JSON:
+// { rows: [{ member_id, outlet_name, spend_amount, visit_date, server_name }] }
+//
+// The dashboard now posts the file itself to /upload-pos and lets the POS
+// modules read it, which handles quoted member names and every vendor layout.
+// This endpoint stays for scripted imports that have already done the parsing.
 router.post("/upload", async (req, res) => {
   const { rows } = req.body;
   if (!Array.isArray(rows) || !rows.length) {
     return res.status(400).json({ error: "rows array is required" });
   }
 
-  const { data: outlets } = await supabase
-    .from("outlets")
-    .select("outlet_id, name, min_spend_threshold, frequency_limit_days")
-    .eq("active", true);
-
-  const outletMap = {};
-  for (const o of outlets || []) {
-    outletMap[o.name.toLowerCase()] = o;
-  }
-
-  const results = { created: 0, qualified: 0, skipped: [], errors: [], details: [] };
-
-  for (const row of rows) {
-    const outletKey = (row.outlet_name || "").toLowerCase().trim();
-    const outlet = outletMap[outletKey];
-    if (!outlet) {
-      results.skipped.push({ member_id: row.member_id, reason: `Unknown outlet: ${row.outlet_name}` });
-      continue;
-    }
-
-    const spend = parseFloat(row.spend_amount);
-    if (isNaN(spend)) {
-      results.skipped.push({ member_id: row.member_id, reason: "Invalid spend amount" });
-      continue;
-    }
-
-    const visitDate = row.visit_date || new Date().toISOString().split("T")[0];
-    const memberId = (row.member_id || "").trim();
-    let visitorType = "member";
-    let guestName = null;
-
-    if (memberId) {
-      const { data: member } = await supabase
-        .from("members")
-        .select("member_id")
-        .eq("member_id", memberId)
-        .maybeSingle();
-      if (!member) {
-        visitorType = "other";
-        guestName = memberId;
-      }
-    } else {
-      visitorType = "other";
-      guestName = row.guest_name || "Unknown";
-    }
-
-    // A visit only qualifies if there is somebody to send to. An upload
-    // carries no phone or email, so a member number the club does not
-    // recognise can never be surveyed — recording it as qualifying just puts
-    // a permanently unsendable row in the queue.
-    const reachable = visitorType === "member";
-    const qualifies = reachable && spend >= parseFloat(outlet.min_spend_threshold);
-
-    const insertObj = {
-      member_id: visitorType === "member" ? memberId : null,
-      outlet_id: outlet.outlet_id,
-      visit_date: visitDate,
-      spend_amount: spend,
-      server_name: row.server_name || null,
-      visitor_type: visitorType,
-      guest_name: visitorType !== "member" ? guestName : null,
-      qualifies,
-    };
-
-    const { error: insertErr } = await supabase.from("visits").insert(insertObj);
-    if (insertErr) {
-      results.errors.push({ member_id: row.member_id, error: insertErr.message });
-      continue;
-    }
-
-    results.created++;
-    if (qualifies) results.qualified++;
-    results.details.push({
-      member_id: memberId || guestName,
-      outlet: outlet.name,
-      spend: spend.toFixed(2),
-      qualifies,
-      reason: qualifies ? "Survey queued" : `Below $${outlet.min_spend_threshold} threshold`,
-    });
-  }
-
-  res.json(results);
+  res.json(await ingestRows(rows, supabase));
 });
 
-// Generic POS report parser (fallback for non-Northstar reports)
-async function parseGenericPosReport(lines, userOutlet, supabase) {
-  const HEADER_HINTS = ["member_id", "member id", "member #", "member_no", "memberid", "member no",
-    "outlet", "location", "venue", "restaurant",
-    "spend", "amount", "total", "check", "bill"];
-  let headerIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const lower = lines[i].toLowerCase();
-    const hits = HEADER_HINTS.filter(h => lower.includes(h));
-    if (hits.length >= 2) { headerIdx = i; break; }
-  }
+// GET /api/visits/pos-modules — the POS systems the uploader can read, for the
+// dashboard's dropdown.
+router.get("/pos-modules", (req, res) => {
+  res.json({ modules: pos.listModules(), file_types: pos.supportedFileTypes() });
+});
 
-  if (headerIdx === -1) {
-    const memberHints = ["member", "id", "name", "customer", "guest"];
-    const moneyHints = ["spend", "amount", "total", "check", "bill", "cost", "price", "$"];
-    for (let i = 0; i < lines.length; i++) {
-      const lower = lines[i].toLowerCase();
-      if (memberHints.some(h => lower.includes(h)) && moneyHints.some(h => lower.includes(h))) {
-        headerIdx = i; break;
-      }
-    }
-  }
-
-  if (headerIdx === -1) {
-    const preview = lines.slice(0, 10).join(" | ");
-    return { error: `Could not find a header row in the PDF. First lines: "${preview.slice(0, 300)}"` };
-  }
-
-  const headerLine = lines[headerIdx];
-  let delimiter;
-  if (headerLine.includes("\t")) delimiter = /\t+/;
-  else if (headerLine.includes("|")) delimiter = /\s*\|\s*/;
-  else if (headerLine.includes(",")) delimiter = /,/;
-  else {
-    const strategies = [/\s{3,}/, /\s{2,}/, /\s+/];
-    let bestDelim = /\s+/, bestCount = 0;
-    for (const d of strategies) {
-      const count = headerLine.split(d).filter(c => c.trim()).length;
-      if (count > bestCount) { bestCount = count; bestDelim = d; }
-    }
-    delimiter = bestDelim;
-  }
-
-  const headers = headerLine.split(delimiter).map(h => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_")).filter(Boolean);
-
-  const colAliases = {
-    member_id: { match: h => (/member/.test(h) && (/[#_]/.test(h) || /id|no|number/.test(h)) && !/name/.test(h)) || /^member_+$/.test(h) },
-    member_name: { match: h => h.includes("member") && h.includes("name") },
-    outlet_name: { match: h => ["outlet", "location", "venue", "restaurant"].some(a => h.includes(a)) },
-    spend_amount: { match: h => ["sub_total", "subtotal", "spend", "item_total"].some(a => h === a) || (h === "total" || h === "amount") },
-    visit_date: { match: h => h.includes("date") },
-    server_name: { match: h => h === "server" || ["waiter", "staff"].some(a => h.includes(a)) },
-    guest_name: { match: h => (h.includes("guest") || h === "name") && !h.includes("member") },
-    check_total: { match: h => ["total_inclusive", "inclusive", "check_total", "grand_total", "tips_total"].some(a => h.includes(a)) },
-  };
-
-  const colMap = {};
-  for (const [field, { match }] of Object.entries(colAliases)) {
-    const idx = headers.findIndex(h => match(h));
-    if (idx !== -1) colMap[field] = idx;
-  }
-
-  if (colMap.spend_amount === undefined && colMap.check_total !== undefined) {
-    colMap.spend_amount = colMap.check_total;
-  }
-
-  let defaultOutlet = userOutlet || null;
-  if (!defaultOutlet && colMap.outlet_name === undefined) {
-    const { data: outlets } = await supabase.from("outlets").select("outlet_id, name").eq("active", true);
-    for (const o of outlets || []) {
-      const oName = o.name.toLowerCase();
-      const words = oName.split(/\s+/);
-      for (let i = 0; i < Math.min(headerIdx, lines.length); i++) {
-        const lineLower = lines[i].toLowerCase();
-        if (lineLower.includes(oName) || (words.length > 1 && words.every(w => lineLower.includes(w)))) {
-          defaultOutlet = o.name; break;
-        }
-      }
-      if (defaultOutlet) break;
-    }
-  }
-
-  const hasMember = colMap.member_id !== undefined || colMap.member_name !== undefined;
-  const hasOutlet = colMap.outlet_name !== undefined || defaultOutlet;
-  const hasSpend = colMap.spend_amount !== undefined;
-
-  if (!hasMember || !hasOutlet || !hasSpend) {
-    const missing = [];
-    if (!hasMember) missing.push("member_id or member_name");
-    if (!hasOutlet) missing.push("outlet_name (select an outlet from the dropdown)");
-    if (!hasSpend) missing.push("spend_amount");
-    return { error: `Could not map required columns. Found: ${headers.join(", ")}. Need: ${missing.join(", ")}.` };
-  }
-
-  const rows = [];
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const cols = lines[i].split(delimiter).map(c => c.trim());
-    if (cols.length < 3) continue;
-    rows.push({
-      member_id: (colMap.member_id !== undefined ? cols[colMap.member_id] : "") || (colMap.member_name !== undefined ? cols[colMap.member_name] : "") || "",
-      outlet_name: colMap.outlet_name !== undefined ? (cols[colMap.outlet_name] || "") : (defaultOutlet || ""),
-      spend_amount: cols[colMap.spend_amount] || "0",
-      visit_date: colMap.visit_date !== undefined ? (cols[colMap.visit_date] || "") : "",
-      server_name: colMap.server_name !== undefined ? (cols[colMap.server_name] || "") : "",
-      guest_name: colMap.guest_name !== undefined ? (cols[colMap.guest_name] || "") : "",
-    });
-  }
-
-  if (!rows.length) return { error: "No data rows found after header." };
-  return rows;
-}
-
-// POST /api/visits/upload-pdf — bulk POS upload from a PDF file
-// Extracts tabular data from the PDF and processes it the same way as the CSV upload.
-router.post("/upload-pdf", upload.single("file"), async (req, res) => {
+// POST /api/visits/upload-pos — bulk POS upload from a PDF, CSV or Excel file.
+// The POS module registry (lib/pos) identifies which system produced the file
+// and parses it; `vendor` in the body forces a specific module when the export
+// carries no branding.
+//
+// Also mounted at /upload-pdf, which is what earlier dashboard builds call.
+async function handlePosUpload(req, res) {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-  let text;
-  try {
-    const parser = new PDFParse({ data: req.file.buffer });
-    const parsed = await parser.getText();
-    text = parsed.text;
-  } catch (e) {
-    return res.status(400).json({ error: "Could not parse PDF: " + String(e) });
-  }
+  const { rows, summary, error } = await pos.parseUpload(req.file, {
+    outletName: req.body?.outlet_name || null,
+    vendor: req.body?.vendor || null,
+  });
 
-  if (!text || text.trim().length < 10) {
-    return res.status(400).json({ error: "PDF appears empty or contains no extractable text" });
-  }
+  if (error) return res.status(400).json({ error, parse_summary: summary });
 
-  const allLines = text.split(/\r?\n/);
-  const lines = allLines.map(l => l.trim()).filter(Boolean);
-
-  // NorthStar exports this report under both "Sales By Location" and
-  // "Daily Sales By Location" — match on the shared part of the title.
-  let rows = [];
-  let parseSummary = null;
-
-  if (posParse.isSalesByLocation(lines)) {
-    const parsed = posParse.parseSalesByLocation(allLines, req.body?.outlet_name);
-    // Several checks by one member at one outlet on one day are a single
-    // visit as far as survey eligibility is concerned.
-    const merged = posParse.aggregateRows(parsed.rows);
-    rows = merged.rows;
-    parseSummary = {
-      format: "NorthStar Sales By Location",
-      checks_parsed: parsed.stats.rows_parsed,
-      checks_without_member: parsed.stats.rows_without_member_id,
-      checks_merged: merged.merged,
-      visits: merged.rows.length,
-      locations: parsed.stats.locations,
-    };
-  } else {
-    rows = await parseGenericPosReport(lines, req.body?.outlet_name, supabase);
-  }
-
-  if (!Array.isArray(rows)) {
-    return res.status(400).json({ error: rows.error || "Failed to parse PDF" });
-  }
-
-  if (!rows.length) {
-    return res.status(400).json({ error: "No data rows found in the PDF after the header row." });
-  }
-
-  // Reuse the same processing logic as the CSV upload
-  const { data: outlets } = await supabase
-    .from("outlets")
-    .select("outlet_id, name, min_spend_threshold, frequency_limit_days")
-    .eq("active", true);
-
-  const outletMap = {};
-  for (const o of outlets || []) {
-    outletMap[o.name.toLowerCase()] = o;
-  }
-
-  const results = { created: 0, qualified: 0, skipped: [], errors: [], details: [] };
-
-  for (const row of rows) {
-    const outletKey = (row.outlet_name || "").toLowerCase().trim();
-    const outlet = outletMap[outletKey];
-    if (!outlet) {
-      results.skipped.push({ member_id: row.member_id, reason: `Unknown outlet: ${row.outlet_name}` });
-      continue;
-    }
-
-    const spend = parseFloat(row.spend_amount.replace(/[$,]/g, ""));
-    if (isNaN(spend)) {
-      results.skipped.push({ member_id: row.member_id, reason: "Invalid spend amount" });
-      continue;
-    }
-
-    let visitDate = row.visit_date || new Date().toISOString().split("T")[0];
-    // Convert MM/DD/YYYY to YYYY-MM-DD
-    const mdyMatch = visitDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (mdyMatch) visitDate = `${mdyMatch[3]}-${mdyMatch[1].padStart(2, "0")}-${mdyMatch[2].padStart(2, "0")}`;
-    let memberId = (row.member_id || "").trim();
-    let visitorType = "member";
-    let guestName = null;
-
-    if (memberId) {
-      let { data: member } = await supabase
-        .from("members")
-        .select("member_id")
-        .eq("member_id", memberId)
-        .maybeSingle();
-
-      // Try base ID without spouse suffix (e.g. M473-S -> M473)
-      if (!member && /-[A-Z]$/.test(memberId)) {
-        const baseId = memberId.replace(/-[A-Z]$/, "");
-        const { data: baseMatch } = await supabase
-          .from("members").select("member_id").eq("member_id", baseId).maybeSingle();
-        if (baseMatch) member = baseMatch;
-      }
-
-      if (!member && /[a-zA-Z]{2,}/.test(memberId)) {
-        const parts = memberId.split(/[\s,]+/).filter(Boolean);
-        if (parts.length >= 2) {
-          const { data: byName } = await supabase
-            .from("members")
-            .select("member_id")
-            .or(`and(first_name.ilike.${parts[0]},last_name.ilike.${parts[1]}),and(first_name.ilike.${parts[1]},last_name.ilike.${parts[0]})`)
-            .limit(1);
-          if (byName && byName.length > 0) member = byName[0];
-        }
-      }
-
-      // Try name-based lookup from member_name field (Daily Sales reports)
-      if (!member && row.member_name) {
-        const nameParts = row.member_name.split(/[\s,]+/).filter(Boolean);
-        if (nameParts.length >= 2) {
-          const { data: byName2 } = await supabase
-            .from("members").select("member_id")
-            .or(`and(first_name.ilike.${nameParts[0]},last_name.ilike.${nameParts[1]}),and(first_name.ilike.${nameParts[1]},last_name.ilike.${nameParts[0]})`)
-            .limit(1);
-          if (byName2 && byName2.length > 0) member = byName2[0];
-        }
-      }
-
-      if (member) {
-        memberId = member.member_id;
-      } else {
-        visitorType = "other";
-        guestName = row.member_name || memberId;
-      }
-    } else {
-      visitorType = "other";
-      guestName = row.guest_name || "Unknown";
-    }
-
-    // A visit only qualifies if there is somebody to send to. An upload
-    // carries no phone or email, so a member number the club does not
-    // recognise can never be surveyed — recording it as qualifying just puts
-    // a permanently unsendable row in the queue.
-    const reachable = visitorType === "member";
-    const qualifies = reachable && spend >= parseFloat(outlet.min_spend_threshold);
-
-    const { error: insertErr } = await supabase.from("visits").insert({
-      member_id: visitorType === "member" ? memberId : null,
-      outlet_id: outlet.outlet_id,
-      visit_date: visitDate,
-      spend_amount: spend,
-      server_name: row.server_name || null,
-      visitor_type: visitorType,
-      guest_name: visitorType !== "member" ? guestName : null,
-      qualifies,
-    });
-    if (insertErr) {
-      results.errors.push({ member_id: row.member_id, error: insertErr.message });
-      continue;
-    }
-
-    results.created++;
-    if (qualifies) results.qualified++;
-    results.details.push({
-      member_id: memberId || guestName,
-      outlet: outlet.name,
-      spend: spend.toFixed(2),
-      qualifies,
-      reason: qualifies
-        ? "Survey queued"
-        : !reachable
-          ? `Not queued — member ${row.member_id || ""} is not in the member list`.replace("  ", " ")
-          : `Below $${outlet.min_spend_threshold} threshold`
-            + (row.checks > 1 ? ` (${row.checks} checks combined)` : ""),
-    });
-    if (!reachable) results.unknown_members = (results.unknown_members || 0) + 1;
-  }
-
-  if (parseSummary) results.parse_summary = parseSummary;
+  const results = await ingestRows(rows, supabase);
+  results.parse_summary = summary;
   res.json(results);
-});
+}
+
+router.post("/upload-pos", upload.single("file"), handlePosUpload);
+router.post("/upload-pdf", upload.single("file"), handlePosUpload);
 
 // POST /api/visits/upload-teesheet — upload a golf tee sheet (PDF, CSV, or Excel)
 // Parses the file for member IDs or names, creates visits for the Golf outlet,

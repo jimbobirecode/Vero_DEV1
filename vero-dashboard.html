@@ -1164,17 +1164,25 @@
       <div class="panel">
         <h2>Upload end-of-shift report</h2>
         <div class="panel-sub">One file, once a day. Everything after this happens automatically.</div>
-        <input type="file" id="posFileInput" accept=".csv,.pdf" style="display:none;" onchange="handlePosFile(this.files)">
-        <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:12px;color:var(--ink-soft);white-space:nowrap;">Outlet (for PDF reports):</label>
-          <select id="posOutletSelect" class="field" style="width:220px;padding:5px 8px;font-size:12px;">
-            <option value="">Auto-detect from file</option>
-          </select>
+        <input type="file" id="posFileInput" accept=".csv,.tsv,.pdf,.xlsx,.xls" style="display:none;" onchange="handlePosFile(this.files)">
+        <div style="margin-bottom:10px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="font-size:12px;color:var(--ink-soft);white-space:nowrap;">POS system:</label>
+            <select id="posVendorSelect" class="field" style="width:220px;padding:5px 8px;font-size:12px;">
+              <option value="">Detect automatically</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="font-size:12px;color:var(--ink-soft);white-space:nowrap;">Outlet:</label>
+            <select id="posOutletSelect" class="field" style="width:220px;padding:5px 8px;font-size:12px;">
+              <option value="">Read from the file</option>
+            </select>
+          </div>
         </div>
         <div class="dropzone" onclick="document.getElementById('posFileInput').click()" id="posDropzone">
           <div class="icon">⬆</div>
           <div class="txt1">Drop your POS export here, or click to browse</div>
-          <div class="txt2">CSV or PDF · columns: member_id, spend_amount, visit_date (optional), server_name (optional)</div>
+          <div class="txt2">PDF, CSV or Excel · NorthStar, Jonas and Lightspeed exports are read as they come out of the POS</div>
         </div>
         <div style="margin-top:8px;">
           <button class="btn-secondary" onclick="downloadPosTemplate()">Download CSV template</button>
@@ -1841,7 +1849,7 @@
     if(tab==='queue') loadSurveyQueue();
     if(tab==='events') loadEventList();
     if(tab==='members') loadMembersFromApi();
-    if(tab==='upload') loadPosOutletOptions();
+    if(tab==='upload'){ loadPosOutletOptions(); loadPosModules(); }
     if(tab==='training') loadTrainingPlans();
     if(tab==='alerts') loadAlerts();
     if(tab==='insights') loadInsights();
@@ -2313,30 +2321,53 @@
     } catch(_){}
   }
 
-  function handlePosFile(files){
-    if(!files || !files.length) return;
-    if(files[0].name.toLowerCase().endsWith('.pdf')){
-      handlePosUploadPdf(files[0]);
-    } else {
-      handlePosUpload(files);
-    }
+  // The POS systems the server has a module for. Left on "Detect
+  // automatically" the server identifies the export itself; the dropdown is
+  // there for exports whose branding was stripped on the way out of the
+  // report writer.
+  async function loadPosModules(){
+    const sel = document.getElementById('posVendorSelect');
+    if(!sel || sel.options.length > 1) return;
+    try {
+      const res = await fetch(API_BASE + '/visits/pos-modules', { headers: authHeaders() });
+      if(!res || !res.ok) return;
+      const data = await res.json();
+      for(const m of (data.modules || [])){
+        if(m.id === 'generic') continue;   // the fallback is not a choice
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.label;
+        sel.appendChild(opt);
+      }
+    } catch(_){}
   }
 
-  async function handlePosUploadPdf(file){
+  // One path for every file type. The server's POS modules read PDF, CSV and
+  // Excel alike — parsing CSV in the browser used to split on every comma,
+  // which shifted every column after a "Last, First" member name.
+  function handlePosFile(files){
+    if(!files || !files.length) return;
+    uploadPosFile(files[0]);
+  }
+
+  async function uploadPosFile(file){
     const progress = document.getElementById('uploadProgress');
     const status = document.getElementById('uploadStatus');
     progress.style.display = 'block';
     document.getElementById('parsePreview').style.display = 'none';
-    status.textContent = 'Uploading and parsing PDF…';
+    document.getElementById('uploadOutletWarning').style.display = 'none';
+    status.textContent = `Reading ${file.name}…`;
     status.style.color = 'var(--forest)';
 
     const formData = new FormData();
     formData.append('file', file);
     const selOutlet = document.getElementById('posOutletSelect').value;
     if(selOutlet) formData.append('outlet_name', selOutlet);
+    const selVendor = document.getElementById('posVendorSelect')?.value;
+    if(selVendor) formData.append('vendor', selVendor);
 
     try {
-      const res = await fetch(API_BASE + '/visits/upload-pdf', { method: 'POST', body: formData, headers: authHeaders() });
+      const res = await fetch(API_BASE + '/visits/upload-pos', { method: 'POST', body: formData, headers: authHeaders() });
       if(!res){
         status.textContent = 'No backend connected.';
         status.style.color = 'var(--brick)';
@@ -2344,8 +2375,9 @@
       }
       const data = await res.json();
       if(!res.ok){
-        status.textContent = data.error || 'PDF upload failed';
+        status.textContent = data.error || 'Upload failed';
         status.style.color = 'var(--brick)';
+        renderPosDiagnostics(data.parse_summary);
         return;
       }
 
@@ -2353,22 +2385,23 @@
       status.style.color = 'var(--sage)';
 
       const ps = data.parse_summary;
-      let summaryHtml = `${data.created} visits created from PDF · ${data.qualified} qualifying · ${data.skipped.length} skipped · ${data.errors.length} errors`;
+      let summaryHtml = `${data.created} visits created · ${data.qualified} qualifying · ${(data.skipped||[]).length} skipped · ${(data.errors||[]).length} errors`;
       if(ps){
-        summaryHtml = `Read <b>${ps.checks_parsed}</b> checks across <b>${ps.locations.length}</b> locations`
+        summaryHtml = `Read as <b>${esc(ps.format)}</b>`
+          + (ps.detected === 'chosen by you' ? ' (you chose this)' : '')
+          + ` · <b>${ps.checks_parsed}</b> checks across <b>${(ps.locations||[]).length}</b> location${(ps.locations||[]).length===1?'':'s'}`
           + (ps.checks_merged ? ` · ${ps.checks_merged} repeat checks combined into the same visit` : '')
           + `<br>${data.created} visits created · ${data.qualified} qualifying for surveys`
-          + (data.skipped.length ? ` · ${data.skipped.length} skipped` : '')
-          + (data.errors.length ? ` · ${data.errors.length} errors` : '');
+          + ((data.skipped||[]).length ? ` · ${data.skipped.length} skipped` : '')
+          + ((data.errors||[]).length ? ` · ${data.errors.length} errors` : '');
       }
-      document.getElementById('uploadSummary').innerHTML = summaryHtml;
 
       // Members the club doesn't recognise: their visits are recorded but
       // cannot be surveyed, so say so rather than leaving the count unexplained.
       if(data.unknown_members){
-        summaryHtml += `<br><span style="color:var(--brick);">${data.unknown_members} visit${data.unknown_members===1?'':'s'} not queued — the member number from the POS isn't in your member list.</span>`;
-        document.getElementById('uploadSummary').innerHTML = summaryHtml;
+        summaryHtml += `<br><span style="color:var(--brick);">${data.unknown_members} visit${data.unknown_members===1?'':'s'} not queued — the member the POS named isn't in your member list.</span>`;
       }
+      document.getElementById('uploadSummary').innerHTML = summaryHtml;
 
       // Locations in the report with no matching outlet are silently dropped,
       // which is the difference between "82 surveys" and "212 surveys".
@@ -2378,8 +2411,8 @@
       const warnEl = document.getElementById('uploadOutletWarning');
       if(unknown.length){
         const count = (data.skipped || []).filter(s => /^Unknown outlet:/.test(s.reason || '')).length;
-        warnEl.innerHTML = `<b>${count} checks were skipped because these locations aren't set up as outlets:</b><br>`
-          + unknown.map(u => `<span class="mono">${u}</span>`).join(' · ')
+        warnEl.innerHTML = `<b>${count} check${count===1?'':'s'} were skipped because these locations aren't set up as outlets:</b><br>`
+          + unknown.map(u => `<span class="mono">${esc(u)}</span>`).join(' · ')
           + `<br><span style="font-weight:400;">Add them in Settings → Outlets (with their spend threshold) and re-upload to capture these visits.</span>`;
         warnEl.style.display = 'block';
       } else {
@@ -2392,9 +2425,9 @@
       const details = data.details || [];
       const skipped = data.skipped || [];
       rowsEl.innerHTML = details.slice(0, 50).map(d =>
-        `<div class="parse-row"><span>${d.member_id}</span><span>${d.outlet}</span><span>$${d.spend}</span><span class="${d.qualifies ? 'qualifies-yes' : 'qualifies-no'}">${d.qualifies ? 'Yes' : 'No'}</span><span>${d.reason}</span></div>`
+        `<div class="parse-row"><span>${esc(d.member_id)}</span><span>${esc(d.outlet)}</span><span>$${esc(d.spend)}</span><span class="${d.qualifies ? 'qualifies-yes' : 'qualifies-no'}">${d.qualifies ? 'Yes' : 'No'}</span><span>${esc(d.reason)}</span></div>`
       ).join('') + skipped.slice(0, 10).map(s =>
-        `<div class="parse-row"><span>${s.member_id || '—'}</span><span>—</span><span>—</span><span class="qualifies-no">Skipped</span><span>${s.reason}</span></div>`
+        `<div class="parse-row"><span>${esc(s.member_id) || '—'}</span><span>—</span><span>—</span><span class="qualifies-no">Skipped</span><span>${esc(s.reason)}</span></div>`
       ).join('');
     } catch(e){
       status.textContent = 'Error: ' + e;
@@ -2402,73 +2435,29 @@
     }
   }
 
-  function handlePosUpload(files){
-    if(!files || !files.length) return;
-    const file = files[0];
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const lines = e.target.result.split(/\r?\n/).filter(l => l.trim());
-      if(lines.length < 2){ alert('CSV file is empty or has no data rows.'); return; }
-      const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'));
-      const colMap = { member_id: header.indexOf('member_id'), outlet_name: header.indexOf('outlet_name'),
-        spend_amount: header.indexOf('spend_amount'), visit_date: header.indexOf('visit_date'),
-        server_name: header.indexOf('server_name'), guest_name: header.indexOf('guest_name') };
+  // When a file can't be read, show what the module actually saw. Without
+  // this the club is left guessing which column its POS calls the member
+  // number, and so are we when they send the export on.
+  function renderPosDiagnostics(ps){
+    const warnEl = document.getElementById('uploadOutletWarning');
+    if(!ps){ warnEl.style.display = 'none'; return; }
 
-      if(colMap.member_id < 0 || colMap.outlet_name < 0 || colMap.spend_amount < 0){
-        alert('CSV must have columns: member_id, outlet_name, spend_amount. Optional: visit_date, server_name');
-        return;
-      }
+    const bits = [];
+    if(ps.format) bits.push(`Read as <b>${esc(ps.format)}</b>${ps.detected === 'chosen by you' ? ' (you chose this)' : ''}.`);
+    const mapped = Object.entries(ps.columns_mapped || {});
+    if(mapped.length){
+      bits.push(`Columns it recognised: ` + mapped.map(([f, h]) => `<span class="mono">${esc(h)}</span> → ${esc(f)}`).join(', ') + '.');
+    }
+    if((ps.columns_ignored || []).length){
+      bits.push(`Columns it did not recognise: ` + ps.columns_ignored.map(h => `<span class="mono">${esc(h)}</span>`).join(', ') + '.');
+    }
+    if((ps.preview || []).length){
+      bits.push(`First lines of the file:<br>` + ps.preview.map(l => `<span class="mono">${esc(l)}</span>`).join('<br>'));
+    }
+    if(!bits.length){ warnEl.style.display = 'none'; return; }
 
-      const rows = [];
-      for(let i=1;i<lines.length;i++){
-        const cols = lines[i].split(',').map(c => c.trim());
-        rows.push({
-          member_id: cols[colMap.member_id] || '',
-          outlet_name: cols[colMap.outlet_name] || '',
-          spend_amount: cols[colMap.spend_amount] || '0',
-          visit_date: colMap.visit_date >= 0 ? cols[colMap.visit_date] : '',
-          server_name: colMap.server_name >= 0 ? cols[colMap.server_name] : '',
-          guest_name: colMap.guest_name >= 0 ? cols[colMap.guest_name] : ''
-        });
-      }
-
-      document.getElementById('uploadProgress').style.display = 'block';
-      document.getElementById('uploadStatus').textContent = `Processing ${rows.length} rows…`;
-      document.getElementById('parsePreview').style.display = 'none';
-
-      const res = await apiCall('/visits/upload', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ rows })
-      });
-
-      if(!res){
-        document.getElementById('uploadStatus').textContent = 'No backend connected.';
-        document.getElementById('uploadStatus').style.color = 'var(--brick)';
-        return;
-      }
-
-      const data = await res.json();
-      if(!res.ok){
-        document.getElementById('uploadStatus').textContent = data.error || 'Upload failed';
-        document.getElementById('uploadStatus').style.color = 'var(--brick)';
-        return;
-      }
-
-      document.getElementById('uploadStatus').textContent = `${data.created} visits created, ${data.qualified} qualifying for surveys`;
-      document.getElementById('uploadStatus').style.color = 'var(--sage)';
-      document.getElementById('uploadSummary').textContent = `${data.created} visits created from upload · ${data.qualified} qualifying · ${data.skipped.length} skipped · ${data.errors.length} errors`;
-      document.getElementById('parsePreview').style.display = 'block';
-
-      const rowsEl = document.getElementById('parseRows');
-      const details = data.details || [];
-      const skipped = data.skipped || [];
-      rowsEl.innerHTML = details.slice(0, 50).map(d =>
-        `<div class="parse-row"><span>${d.member_id}</span><span>${d.outlet}</span><span>$${d.spend}</span><span class="${d.qualifies ? 'qualifies-yes' : 'qualifies-no'}">${d.qualifies ? 'Yes' : 'No'}</span><span>${d.reason}</span></div>`
-      ).join('') + skipped.slice(0, 10).map(s =>
-        `<div class="parse-row"><span>${s.member_id || '—'}</span><span>—</span><span>—</span><span class="qualifies-no">Skipped</span><span>${s.reason}</span></div>`
-      ).join('');
-    };
-    reader.readAsText(file);
+    warnEl.innerHTML = bits.join('<br>');
+    warnEl.style.display = 'block';
   }
 
   let _teesheetData = null;
@@ -4805,7 +4794,7 @@
     },
     upload: {
       title: 'How Upload works',
-      text: 'This is where data enters the system. Upload your daily POS export (CSV) and the system parses it, matches member IDs, checks spend against outlet thresholds, and queues surveys automatically. For golf, upload the tee sheet as a PDF — golf surveys are sent immediately. After upload, the nightly cron checks each visit and sends surveys to qualifying members.'
+      text: 'This is where data enters the system. Upload your daily POS export exactly as it comes out of the POS — PDF, CSV or Excel — and the system works out which POS produced it, parses it, matches member numbers, checks spend against outlet thresholds, and queues surveys automatically. NorthStar, Jonas and Lightspeed exports are read directly; anything else is read by column name, and you can pick the POS from the dropdown if an export carries no branding. Several checks by the same member at the same outlet on the same day are combined into one visit, and spend is taken net of tax and gratuity so an auto-added 18% cannot push a check over your threshold. For golf, upload the tee sheet as a PDF — golf surveys are sent immediately. After upload, the nightly cron checks each visit and sends surveys to qualifying members.'
     },
     builder: {
       title: 'How Survey Builder works',
