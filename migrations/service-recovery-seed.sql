@@ -15,10 +15,18 @@
 -- again. It only ever touches rows it created, identified by the DEMO_ member
 -- ids and the demo-recovery- survey tokens. Teardown is at the bottom.
 --
+-- Works against YOUR outlets, whatever they are called — it takes the first
+-- three active ones and cycles if you have fewer. It does not need any
+-- particular outlet to exist by name, and it raises a plain error rather than
+-- doing nothing if the club has no active outlets at all.
+--
 -- The whole file is two statements: the DO block, and a query that reports
--- what it produced. Paste it all into the Supabase SQL editor and run it.
--- Verified on Postgres 16 — whole file, re-run for idempotency, and each
--- statement replayed on its own connection.
+-- what it produced. Paste it all into the Supabase SQL editor and run it. It
+-- prints a NOTICE saying how many alerts it created and on which outlets.
+--
+-- Verified on Postgres 16: clean database, re-run for idempotency, each
+-- statement on its own connection, a club whose outlets share no name with
+-- this file, a club with a single outlet, and a club with none.
 
 -- Everything that builds the demo runs inside one DO block, which Postgres
 -- executes as a single statement. Earlier versions of this file used separate
@@ -27,7 +35,32 @@
 -- connection can put each on a different session. One statement cannot be
 -- split, cannot be half-committed, and cannot lose its own temp tables.
 do $seed$
+declare
+  v_outlets int;
+  v_alerts  int;
+  v_names   text;
 begin
+
+-- ------------------------------------------------------------------ outlets --
+-- The stories below are written against three outlets. Which three does not
+-- matter — they are taken from whatever this club has configured, and cycled
+-- if there are fewer than three.
+--
+-- The previous version joined on hard-coded outlet names taken from
+-- schema.sql's own demo seed. On a real club's database nothing matched, every
+-- insert produced zero rows, and the block still reported success — which is
+-- the worst possible failure, because it looks like it worked.
+create temp table demo_recovery_outlets on commit drop as
+  select row_number() over (order by name) as slot, outlet_id, name
+    from outlets
+   where coalesce(active, true)
+   order by name
+   limit 3;
+
+select count(*) into v_outlets from demo_recovery_outlets;
+if v_outlets = 0 then
+  raise exception 'No active outlets found. Add your outlets in Settings first — the demo alerts have to belong to one.';
+end if;
 
 -- ---------------------------------------------------------------- teardown --
 delete from alert_outreach where alert_id in (
@@ -70,7 +103,7 @@ insert into members (member_id, first_name, last_name, phone_number, email_addre
 --   follow_up_nps   their score on a later visit; null = not been back yet
 --   no_contact      a stated reason for closing without ever contacting them
 create temp table demo_recovery_cases (
-  member_id text, outlet_name text, severity text, hours_ago numeric,
+  member_id text, outlet_slot int, severity text, hours_ago numeric,
   nps smallint, overall smallint, food smallint, service smallint, comment text,
   assigned_to text, contact_hours numeric, reached boolean, sentiment text,
   call_note text, prior_attempt boolean, follow_up_nps smallint,
@@ -80,51 +113,51 @@ create temp table demo_recovery_cases (
 insert into demo_recovery_cases values
 -- ===== LIVE QUEUE — what the GM is looking at right now ====================
 -- Overdue: the window closed six hours ago and nobody has rung him.
-('DEMO_1042','Belmont Dining Room','high',   30, 2,1,1,2,
+('DEMO_1042',1,'high',   30, 2,1,1,2,
  'Waited fifty minutes for a main that came out cold. Nobody checked on us all night.',
  'Sarah Kim',   null, null, null, null, false, null, null, false),
 -- Two hours left. One try already made — wrong number on file, so the clock
 -- is still running, which is exactly the case the rule exists for.
-('DEMO_0876','Golf Patio','high',            22, 3,2,3,1,
+('DEMO_0876',2,'high',            22, 3,2,3,1,
  'Bar staff were short with my guests. Embarrassing in front of clients.',
  'Tom Reyes',   null, null, null, null, true,  null, null, false),
 -- Past halfway through a 72-hour window.
-('DEMO_1155','Belmont Poolside','medium',    40, 5,2,3,3,
+('DEMO_1155',3,'medium',    40, 5,2,3,3,
  'Course was fine but the halfway house was unstaffed for over an hour.',
  'Priya Anand', null, null, null, null, false, null, null, false),
 -- Fresh, and nobody can ring him: no phone, no email.
-('DEMO_W135','Belmont Dining Room','medium',  9, 4,2,2,2,
+('DEMO_W135',1,'medium',  9, 4,2,2,2,
  'Our booking was lost. We ended up eating in the bar.',
  null,          null, null, null, null, false, null, null, false),
 
 -- ===== RECOVERED — called back fast, came back happier =====================
-('DEMO_2201','Belmont Dining Room','high',  38*24, 2,1,2,1,
+('DEMO_2201',1,'high',  38*24, 2,1,2,1,
  'The lamb was inedible and the waiter argued with me about it.',
  'Sarah Kim',    2.5, true,  'recovered',    'Apologised, comped the meal, invited her back as my guest.', false,  9, null, true),
-('DEMO_2318','Golf Patio','high',           31*24, 3,2,2,2,
+('DEMO_2318',2,'high',           31*24, 3,2,2,2,
  'Third time this month the patio has run out of the house red.',
  'Tom Reyes',    4.0, true,  'recovered',    'Explained the supplier issue, put a case aside for him.',    false, 10, null, true),
-('DEMO_2456','Belmont Poolside','medium',   24*24, 5,2,3,3,
+('DEMO_2456',3,'medium',   24*24, 5,2,3,3,
  'Towels were not restocked and the loungers were filthy by midday.',
  'Priya Anand',  6.5, true,  'neutral',      'Heard her out. Poolside rota changed from Monday.',          false,  8, null, true),
 -- Two attempts before he answered, and still angry on the call — recovery is
 -- not automatic, and the record should show that.
-('DEMO_2519','Belmont Dining Room','high',  19*24, 1,1,1,1,
+('DEMO_2519',1,'high',  19*24, 1,1,1,1,
  'Sent back twice. Nobody apologised. We left without eating.',
  'Sarah Kim',    1.5, true,  'still_unhappy','Long call. Still angry. Offered dinner with the chef.',      true,   7, null, true),
-('DEMO_2604','Golf Patio','medium',         14*24, 4,2,3,2,
+('DEMO_2604',2,'medium',         14*24, 4,2,3,2,
  'Slow service at the turn, we missed our tee time.',
  'Tom Reyes',    9.0, true,  'recovered',    'Starter now holds tee times when the turn backs up.',        false,  9, null, true),
 
 -- ===== CALLED BACK, BUT NOT RECOVERED =====================================
 -- Rang him quickly, he still rated the club lower next visit. The metric has
 -- to be able to show this or nobody will believe the good numbers.
-('DEMO_2733','Belmont Dining Room','medium', 11*24, 4,2,2,3,
+('DEMO_2733',1,'medium', 11*24, 4,2,2,3,
  'Music far too loud to hold a conversation.',
  'Priya Anand',  3.0, true,  'neutral',      'Took the point. Volume policy reviewed.',                    false,  3, null, true),
 
 -- ===== VOICEMAIL ONLY — clock stopped, but this is not recovery ============
-('DEMO_2201','Golf Patio','medium',          8*24, 5,3,3,3,
+('DEMO_2201',2,'medium',          8*24, 5,3,3,3,
  'Burger was dry and the chips were cold.',
  'Tom Reyes',    5.0, false, null,           'Left a voicemail asking her to call back.',                  true,  null, null, false),
 
@@ -132,16 +165,16 @@ insert into demo_recovery_cases values
 -- Counts as contacted, but not as contacted in time. Has to be high severity
 -- to tell that story: a medium alert has a 72-hour window, so a call at 38
 -- hours would be comfortably inside it.
-('DEMO_2318','Belmont Poolside','high',     16*24, 4,2,2,2,
+('DEMO_2318',3,'high',     16*24, 4,2,2,2,
  'Pool bar closed early with no notice, twice in a week.',
  'Priya Anand', 38.0, true,  'neutral',      'Late call. Fair about it, but he had already told friends.', false,  6, null, true),
 
 -- ===== CLOSED WITHOUT CONTACT, WITH A STATED REASON =======================
 -- These leave the denominator: they neither flatter nor punish the number.
-('DEMO_2456','Golf Patio','low',            26*24, 6,3,3,3,
+('DEMO_2456',2,'low',            26*24, 6,3,3,3,
  'Car park was full at 8am on a Saturday.',
  'Tom Reyes',   null, null, null, null, false, null, 'not_member_specific', true),
-('DEMO_2519','Belmont Poolside','low',      21*24, 6,3,4,3,
+('DEMO_2519',3,'low',      21*24, 6,3,4,3,
  'Nothing wrong exactly, just not what it used to be.',
  'Sarah Kim',   null, null, null, null, false, null, 'member_declined',     true);
 
@@ -154,6 +187,11 @@ insert into demo_recovery_cases values
 create temp table demo_recovery_alerts on commit drop as
 select c.*,
        o.outlet_id,
+       gen_random_uuid() as visit_id,
+       gen_random_uuid() as response_id,
+       gen_random_uuid() as alert_id,
+       gen_random_uuid() as follow_visit_id,
+       gen_random_uuid() as follow_response_id,
        (now() - make_interval(hours => c.hours_ago::int)) as created_at,
        (now() - make_interval(hours => c.hours_ago::int))::date as visit_date,
        (now() - make_interval(hours => c.hours_ago::int))
@@ -164,7 +202,9 @@ select c.*,
        case when c.contact_hours is not null
             then now() - make_interval(hours => (c.hours_ago - c.contact_hours)::int) end as contact_at
   from demo_recovery_cases c
-  join outlets o on lower(o.name) = lower(c.outlet_name);
+  -- Whatever outlets this club actually has, cycled if there are fewer than
+  -- the three the stories assume.
+  join demo_recovery_outlets o on o.slot = 1 + ((c.outlet_slot - 1) % v_outlets);
 
 alter table demo_recovery_alerts add column stage text;
 update demo_recovery_alerts set stage =
@@ -176,29 +216,25 @@ update demo_recovery_alerts set stage =
   end;
 
 -- ------------------------------------------------------------------ visits --
-insert into visits (member_id, outlet_id, visit_date, spend_amount, server_name, visitor_type, qualifies, survey_sent_at)
-select a.member_id, a.outlet_id, a.visit_date,
+insert into visits (visit_id, member_id, outlet_id, visit_date, spend_amount, server_name, visitor_type, qualifies, survey_sent_at)
+select a.visit_id, a.member_id, a.outlet_id, a.visit_date,
        (60 + (random() * 90))::numeric(10,2),
        (array['Ava Del Viscio','Sabrina Swope','Priyanka','Patrick McDermott'])[1 + floor(random() * 4)::int],
        'member', true, a.created_at - interval '2 hours'
   from demo_recovery_alerts a;
 
 -- --------------------------------------------------------------- responses --
-insert into survey_responses (visit_id, survey_token, q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, is_complete)
-select v.visit_id, 'demo-recovery-' || v.visit_id,
+insert into survey_responses (response_id, visit_id, survey_token, q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, is_complete)
+select a.response_id, a.visit_id, 'demo-recovery-' || a.visit_id,
        a.nps, a.overall, a.food, a.service, a.comment, a.created_at, true
-  from demo_recovery_alerts a
-  join visits v on v.member_id = a.member_id
-               and v.outlet_id = a.outlet_id
-               and v.visit_date = a.visit_date
- where not exists (select 1 from survey_responses s where s.visit_id = v.visit_id);
+  from demo_recovery_alerts a;
 
 -- ------------------------------------------------------------------ alerts --
 insert into case_alerts (
-  response_id, outlet_id, severity, status, assigned_to, assigned_to_staff_id,
+  alert_id, response_id, outlet_id, severity, status, assigned_to, assigned_to_staff_id,
   created_at, resolved_at, contact_due_at, first_contact_at, first_reached_at,
   outreach_count, no_contact_reason, ai_summary, escalated_stage, escalated_at)
-select sr.response_id, a.outlet_id, a.severity,
+select a.alert_id, a.response_id, a.outlet_id, a.severity,
        case when a.resolved             then 'resolved'
             when a.contact_at is not null then 'contacted'
             when a.assigned_to is not null then 'assigned'
@@ -215,8 +251,6 @@ select sr.response_id, a.outlet_id, a.severity,
        a.stage,
        case when a.stage is not null then now() - interval '1 hour' end
   from demo_recovery_alerts a
-  join visits v on v.member_id = a.member_id and v.outlet_id = a.outlet_id and v.visit_date = a.visit_date
-  join survey_responses sr on sr.visit_id = v.visit_id
   left join staff st on st.name = a.assigned_to;
 
 -- ---------------------------------------------------------------- outreach --
@@ -224,27 +258,21 @@ select sr.response_id, a.outlet_id, a.severity,
 -- only outcome that does not stop the clock, so an alert can show an attempt
 -- and still legitimately be waiting on a call-back.
 insert into alert_outreach (alert_id, member_id, channel, outcome, occurred_at, logged_by_name, logged_via)
-select ca.alert_id, a.member_id, 'phone', 'wrong_number',
+select a.alert_id, a.member_id, 'phone', 'wrong_number',
        a.created_at + interval '40 minutes',
        coalesce(a.assigned_to, 'Sarah Kim'), 'dashboard'
   from demo_recovery_alerts a
-  join visits v on v.member_id = a.member_id and v.outlet_id = a.outlet_id and v.visit_date = a.visit_date
-  join survey_responses sr on sr.visit_id = v.visit_id
-  join case_alerts ca on ca.response_id = sr.response_id
  where a.prior_attempt;
 
 -- The call that stopped the clock. Logged through whichever door is plausible:
 -- a fast call came from the one-tap link in the escalation email.
 insert into alert_outreach (alert_id, member_id, channel, outcome, member_sentiment, notes, occurred_at, logged_by, logged_by_name, logged_via)
-select ca.alert_id, a.member_id, 'phone',
+select a.alert_id, a.member_id, 'phone',
        case when a.reached then 'reached' else 'left_message' end,
        a.sentiment, a.call_note, a.contact_at,
        st.staff_id, coalesce(a.assigned_to, 'Sarah Kim'),
        case when a.contact_hours < 6 then 'one_tap' else 'dashboard' end
   from demo_recovery_alerts a
-  join visits v on v.member_id = a.member_id and v.outlet_id = a.outlet_id and v.visit_date = a.visit_date
-  join survey_responses sr on sr.visit_id = v.visit_id
-  join case_alerts ca on ca.response_id = sr.response_id
   left join staff st on st.name = a.assigned_to
  where a.contact_at is not null;
 
@@ -252,8 +280,8 @@ select ca.alert_id, a.member_id, 'phone',
 -- The proof behind "rated us higher after". Dated a week AFTER the call, never
 -- before it — a response submitted before the call is the one that raised the
 -- alert, and must never be read as evidence of recovery.
-insert into visits (member_id, outlet_id, visit_date, spend_amount, visitor_type, qualifies, survey_sent_at)
-select a.member_id, a.outlet_id,
+insert into visits (visit_id, member_id, outlet_id, visit_date, spend_amount, visitor_type, qualifies, survey_sent_at)
+select a.follow_visit_id, a.member_id, a.outlet_id,
        (a.contact_at + interval '7 days')::date,
        (70 + (random() * 80))::numeric(10,2), 'member', true,
        a.contact_at + interval '7 days'
@@ -261,8 +289,8 @@ select a.member_id, a.outlet_id,
  where a.follow_up_nps is not null
    and a.contact_at + interval '7 days' < now();
 
-insert into survey_responses (visit_id, survey_token, q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, is_complete)
-select v.visit_id, 'demo-recovery-followup-' || v.visit_id,
+insert into survey_responses (response_id, visit_id, survey_token, q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, is_complete)
+select a.follow_response_id, a.follow_visit_id, 'demo-recovery-followup-' || a.follow_visit_id,
        a.follow_up_nps,
        greatest(1, least(5, (a.follow_up_nps / 2))),
        greatest(1, least(5, (a.follow_up_nps / 2))),
@@ -272,13 +300,17 @@ select v.visit_id, 'demo-recovery-followup-' || v.visit_id,
             else 'Better, but still not quite there.' end,
        a.contact_at + interval '7 days 3 hours', true
   from demo_recovery_alerts a
-  join visits v on v.member_id = a.member_id
-               and v.outlet_id = a.outlet_id
-               and v.visit_date = (a.contact_at + interval '7 days')::date
  where a.follow_up_nps is not null
-   and a.contact_at + interval '7 days' < now()
-   and not exists (select 1 from survey_responses s where s.visit_id = v.visit_id);
+   and a.contact_at + interval '7 days' < now();
 
+
+-- Say what was built. A seed that quietly produces nothing is the failure mode
+-- worth guarding against — that is exactly how the outlet-name version failed.
+select count(*), string_agg(distinct name, ', ' order by name)
+  into v_alerts, v_names
+  from demo_recovery_alerts a join demo_recovery_outlets o on o.outlet_id = a.outlet_id;
+
+raise notice 'Seeded % case alerts across % outlet(s): %', v_alerts, v_outlets, v_names;
 
 end
 $seed$;
