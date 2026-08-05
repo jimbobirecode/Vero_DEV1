@@ -14,14 +14,20 @@
 -- Idempotent: re-running deletes everything it previously inserted and starts
 -- again. It only ever touches rows it created, identified by the DEMO_ member
 -- ids and the demo-recovery- survey tokens. Teardown is at the bottom.
+--
+-- The whole file is two statements: the DO block, and a query that reports
+-- what it produced. Paste it all into the Supabase SQL editor and run it.
+-- Verified on Postgres 16 — whole file, re-run for idempotency, and each
+-- statement replayed on its own connection.
 
--- Staging tables are REAL, not temporary. Supabase's SQL editor commits each
--- statement on its own, which drops an ON COMMIT DROP temp table before the
--- next statement can read it — and a transaction-pooled connection can put
--- each statement on a different session, where a temp table does not exist at
--- all. These are dropped explicitly at the end.
-drop table if exists demo_recovery_alerts;
-drop table if exists demo_recovery_cases;
+-- Everything that builds the demo runs inside one DO block, which Postgres
+-- executes as a single statement. Earlier versions of this file used separate
+-- statements and a staging table, and the SQL editor kept losing the table
+-- between them — it commits each statement on its own, and a pooled
+-- connection can put each on a different session. One statement cannot be
+-- split, cannot be half-committed, and cannot lose its own temp tables.
+do $seed$
+begin
 
 -- ---------------------------------------------------------------- teardown --
 delete from alert_outreach where alert_id in (
@@ -63,13 +69,13 @@ insert into members (member_id, first_name, last_name, phone_number, email_addre
 --                   would contradict the rules the dashboard applies.
 --   follow_up_nps   their score on a later visit; null = not been back yet
 --   no_contact      a stated reason for closing without ever contacting them
-create table demo_recovery_cases (
+create temp table demo_recovery_cases (
   member_id text, outlet_name text, severity text, hours_ago numeric,
   nps smallint, overall smallint, food smallint, service smallint, comment text,
   assigned_to text, contact_hours numeric, reached boolean, sentiment text,
   call_note text, prior_attempt boolean, follow_up_nps smallint,
   no_contact text, resolved boolean
-);
+) on commit drop;
 
 insert into demo_recovery_cases values
 -- ===== LIVE QUEUE — what the GM is looking at right now ====================
@@ -145,7 +151,7 @@ insert into demo_recovery_cases values
 -- particular has to come from the alert's own window, not from a raw hour
 -- count: a medium alert 40 hours old is halfway through a 72-hour window, not
 -- overdue.
-create table demo_recovery_alerts as
+create temp table demo_recovery_alerts on commit drop as
 select c.*,
        o.outlet_id,
        (now() - make_interval(hours => c.hours_ago::int)) as created_at,
@@ -273,9 +279,9 @@ select v.visit_id, 'demo-recovery-followup-' || v.visit_id,
    and a.contact_at + interval '7 days' < now()
    and not exists (select 1 from survey_responses s where s.visit_id = v.visit_id);
 
--- Staging tables have done their job.
-drop table demo_recovery_alerts;
-drop table demo_recovery_cases;
+
+end
+$seed$;
 
 -- ------------------------------------------------------------------ check --
 -- Run this after seeding. It should show 4 awaiting a call, 1 breached,
