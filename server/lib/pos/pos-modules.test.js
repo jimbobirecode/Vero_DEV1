@@ -1,9 +1,10 @@
-// Tests for the POS module registry and the Jonas / Lightspeed uploaders.
+// Tests for the POS module registry and the Jonas, Lightspeed and Club V1
+// uploaders.
 //
 // The fixtures are built from the export layouts each vendor documents, with
 // the awkward shapes deliberately included: a title block above the header,
 // member names carrying commas, subtotal rows, a voided check, a spouse
-// suffix, and a day-first date column.
+// suffix, VAT and pound signs, and a day-first date column.
 
 const { parseUpload, detectModule, readDocument, listModules } = require("./index");
 const shared = require("./shared");
@@ -238,6 +239,93 @@ M1042,Grill Room,67.00,07/29/2026,Ava
   const tsv = await parseUpload(file("export.tsv", TSV));
   check("registry: reads a tab-separated export", tsv.error || tsv.summary.vendor, "jonas");
 
+  // ============================================================ Club V1 ====
+
+  // £, VAT, sections and DD/MM/YYYY. The dates here are the whole point: read
+  // month-first, 07/08/2026 silently becomes 7 August instead of 8 July.
+  const CV1_CSV = `Club Systems — Club V1
+Till Sales Analysis
+Date: 08/07/2026
+
+Member No,Member Name,Trans Date,Section,Operator,Docket No,Covers,Net,VAT,Gross
+001042,"Krietsch, Karl",08/07/2026,Members Bar,A Dunne,551201,2,£67.00,£13.40,£80.40
+001042,"Krietsch, Karl",08/07/2026,Members Bar,A Dunne,551288,2,£33.00,£6.60,£39.60
+000876,"Norton, Robert",08/07/2026,Spike Bar,P Shaw,551302,,£23.00,£4.60,£27.60
+001155-J,"Pettit, Cynthia",08/07/2026,Halfway House,P Shaw,551340,,£17.00,£3.40,£20.40
+000876,"Norton, Robert",08/07/2026,Spike Bar,P Shaw,551355,,(£9.00),(£1.80),(£10.80)
+Section Total,,,,,,,£131.00,£26.20,£157.20
+`;
+
+  const cv1Doc = await readDocument(file("till-sales.csv", CV1_CSV));
+  check("Club V1: detected from a Club V1 export", detectModule(cv1Doc).module.id, "clubv1");
+
+  const cv1 = await parseUpload(file("till-sales.csv", CV1_CSV));
+  check("Club V1: parses without error", cv1.error || null, null);
+  check("Club V1: reports the vendor", cv1.summary.vendor, "clubv1");
+  check("Club V1: takes Net, not the VAT-inclusive Gross", cv1.summary.spend_column, "Net");
+  check("Club V1: maps Section to the outlet", cv1.summary.columns_mapped.outlet_name, "Section");
+  check("Club V1: maps Operator to the server", cv1.summary.columns_mapped.server_name, "Operator");
+  check("Club V1: maps Docket No to the check number", cv1.summary.columns_mapped.check_number, "Docket No");
+  check("Club V1: drops the section total", cv1.summary.stats.rows_skipped_summary, 1);
+
+  // The regression this module exists to prevent.
+  check("Club V1: reads dates day-first", cv1.summary.date_order, "day-first");
+  check("Club V1: 08/07/2026 is 8 July, not 7 August",
+    cv1.rows[0].visit_date, "2026-07-08");
+
+  check("Club V1: strips the pound sign", cv1.rows.find((r) => r.member_id === "001042").spend_amount, "100.00");
+  check("Club V1: a parenthesised credit nets against the sale",
+    cv1.rows.find((r) => r.member_id === "000876").spend_amount, "14.00");
+  check("Club V1: keeps a junior suffix for the member lookup",
+    cv1.rows.find((r) => r.member_name === "Pettit, Cynthia").member_id, "001155-J");
+  check("Club V1: separates sections",
+    [...new Set(cv1.rows.map((r) => r.outlet_name))].sort(),
+    ["Halfway House", "Members Bar", "Spike Bar"]);
+
+  // A club that has configured an American date format still parses: 25 in
+  // the second position can only be a day, so day-first is turned off.
+  const CV1_US = `Club V1 Till Sales
+Member No,Trans Date,Section,Net
+001042,07/25/2026,Members Bar,£40.00
+001042,07/26/2026,Members Bar,£10.00
+`;
+  const cv1us = await parseUpload(file("us-dates.csv", CV1_US));
+  check("Club V1: an American date column overrules the day-first default",
+    cv1us.rows[0].visit_date, "2026-07-25");
+
+  // An all-ambiguous column keeps the UK default rather than guessing.
+  const CV1_AMBIG = `Club V1 Till Sales
+Member No,Trans Date,Section,Net
+001042,03/04/2026,Members Bar,£40.00
+`;
+  const cv1amb = await parseUpload(file("ambig.csv", CV1_AMBIG));
+  check("Club V1: an ambiguous date stays day-first", cv1amb.rows[0].visit_date, "2026-04-03");
+
+  // Section in the preamble rather than as a column.
+  const CV1_BLOCK = `Club Systems Club V1
+EPOS Sales
+Section: Members Bar
+Date: 08/07/2026
+
+Membership No,Name,Docket,Net
+001042,"Krietsch, Karl",551201,£44.50
+`;
+  const cv1block = await parseUpload(file("epos.csv", CV1_BLOCK));
+  check("Club V1: takes the section from the preamble when there is no column",
+    cv1block.rows[0].outlet_name, "Members Bar");
+  check("Club V1: takes the date from a single-day preamble, day-first",
+    cv1block.rows[0].visit_date, "2026-07-08");
+
+  // Club V1 must not steal the North American vendors' files, or lose its own.
+  check("registry: Club V1 does not claim a Jonas file",
+    require("./clubv1").detect(jonasDoc) < jonas.detect(jonasDoc), true);
+  check("registry: Club V1 does not claim a Lightspeed file",
+    require("./clubv1").detect(lsDoc) < lightspeed.detect(lsDoc), true);
+  check("registry: Jonas does not claim a Club V1 file",
+    jonas.detect(cv1Doc) < require("./clubv1").detect(cv1Doc), true);
+  check("registry: Lightspeed does not claim a Club V1 file",
+    lightspeed.detect(cv1Doc) < require("./clubv1").detect(cv1Doc), true);
+
   // --- the PDF path, where there is no grid and columns are runs of spaces
   // rather than delimiters. Built as a document directly, since the input is
   // pdf-parse's text layer rather than a file we can fabricate.
@@ -300,7 +388,7 @@ M1042,Grill Room,67.00,07/29/2026,Ava
     js.columns_ignored.includes("Gratuity") && js.columns_ignored.includes("Tax"), true);
 
   check("registry: lists its modules for the dashboard",
-    listModules().map((m) => m.id), ["northstar", "jonas", "lightspeed", "generic"]);
+    listModules().map((m) => m.id), ["northstar", "jonas", "lightspeed", "clubv1", "generic"]);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

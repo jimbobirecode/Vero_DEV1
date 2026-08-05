@@ -18,6 +18,7 @@ const posParse = require("../pos-parse");
 
 const jonas = require("./jonas");
 const lightspeed = require("./lightspeed");
+const clubv1 = require("./clubv1");
 const generic = require("./generic");
 
 // NorthStar's PDF wraps a single check across several lines, so it is parsed
@@ -26,6 +27,7 @@ const generic = require("./generic");
 const northstar = {
   id: "northstar",
   label: "NorthStar Sales By Location",
+  fileTypes: [".pdf"],   // the only shape this report is exported in
   detect(doc) {
     return posParse.isSalesByLocation(doc.lines) ? 0.95 : 0;
   },
@@ -50,7 +52,7 @@ const northstar = {
 };
 
 // Order is presentational only — detect() decides. Generic stays last.
-const MODULES = [northstar, jonas, lightspeed, generic];
+const MODULES = [northstar, jonas, lightspeed, clubv1, generic];
 
 // ------------------------------------------------------------ file input ----
 
@@ -222,7 +224,7 @@ function listModules() {
   return MODULES.map((m) => ({
     id: m.id,
     label: m.label,
-    file_types: m.id === "northstar" ? [".pdf"] : supportedFileTypes(),
+    file_types: m.fileTypes || supportedFileTypes(),
   }));
 }
 
