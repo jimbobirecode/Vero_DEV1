@@ -34,7 +34,7 @@ async function recoveryReady() {
 }
 
 // Exposed so a test or a deploy check can force a re-probe after migrating.
-function resetReadyCache() { readyCache = null; }
+function resetReadyCache() { readyCache = null; resolutionsReadyCache = null; }
 
 async function loadSlaSettings() {
   const { data } = await supabase
@@ -189,8 +189,71 @@ async function followUpScores(alerts) {
   return out;
 }
 
+// ------------------------------------------------------------ resolution ----
+
+let resolutionsReadyCache = null;
+
+async function resolutionsReady() {
+  if (resolutionsReadyCache !== null) return resolutionsReadyCache;
+  const { error } = await supabase.from("case_resolutions").select("resolution_id").limit(1);
+  resolutionsReadyCache = error && /case_resolutions|relation|does not exist/i.test(error.message || "")
+    ? { ok: false, error: "Saving resolutions needs migrations/case-resolutions.sql to be run." }
+    : { ok: true };
+  return resolutionsReadyCache;
+}
+
+// Records how a case was closed. Written before the alert is marked resolved,
+// so a failure here leaves the case open rather than closed with no account of
+// what was done — the wrong way round would lose the record permanently.
+async function saveResolution(alert, resolution, actor = {}) {
+  const row = {
+    alert_id: alert.alert_id,
+    root_cause: resolution.root_cause,
+    action_taken: resolution.action_taken,
+    notes: resolution.notes || null,
+    goodwill_type: resolution.goodwill_type || null,
+    goodwill_amount: resolution.goodwill_amount ?? null,
+    contacted_member: Boolean(alert.first_contact_at),
+    no_contact_reason: alert.first_contact_at ? null : (resolution.no_contact_reason || null),
+    resolved_by: actor.staff_id || null,
+    resolved_by_name: actor.name || null,
+  };
+
+  const { data, error } = await supabase.from("case_resolutions").insert(row).select().single();
+  if (error) return { error: error.message, status: 500 };
+  return { resolution: data };
+}
+
+// The live resolution for a case — the one that has not been superseded.
+async function currentResolution(alertId) {
+  const { data } = await supabase
+    .from("case_resolutions").select("*")
+    .eq("alert_id", alertId).is("superseded_at", null).maybeSingle();
+  return data || null;
+}
+
+async function resolutionHistory(alertId) {
+  const { data } = await supabase
+    .from("case_resolutions").select("*")
+    .eq("alert_id", alertId).order("resolved_at", { ascending: false });
+  return data || [];
+}
+
+// Reopening means the fix did not hold. The resolution stays on the record and
+// is marked superseded, so a recurrence can be read against what was tried
+// last time.
+async function supersedeResolution(alertId) {
+  const { error } = await supabase
+    .from("case_resolutions")
+    .update({ superseded_at: new Date().toISOString() })
+    .eq("alert_id", alertId)
+    .is("superseded_at", null);
+  return { error: error?.message || null };
+}
+
 module.exports = {
   recoveryReady, resetReadyCache, loadSlaSettings,
+  resolutionsReady, saveResolution, currentResolution, resolutionHistory, supersedeResolution,
   alertForRecovery, alertByToken, ensureDueDate, ensureRecoveryToken,
   logOutreach, outreachFor, followUpScores,
   shapeAlert, ALERT_FIELDS, ALERT_WITH_MEMBER,

@@ -188,6 +188,58 @@ check("and says how many are measurable", early.recovery_measurable, 0);
 check("an empty period does not divide by zero",
   R.recoveryMetrics([], new Map(), NOW).pct_contacted_within_sla, null);
 
+// ------------------------------------------------------------- resolution ---
+
+const RES = { root_cause: "service_speed", action_taken: "coached_staff" };
+
+check("a resolution needs both a cause and an action", R.validateResolution(RES).ok, true);
+check("without a cause it is refused", R.validateResolution({ action_taken: "coached_staff" }).ok, false);
+check("without an action it is refused", R.validateResolution({ root_cause: "service_speed" }).ok, false);
+check("an invented cause is refused", R.validateResolution({ ...RES, root_cause: "gremlins" }).ok, false);
+
+check("goodwill is optional",
+  R.validateResolution({ ...RES, goodwill_type: "comped_visit", goodwill_amount: 84.50 }).ok, true);
+check("an amount is carried through",
+  R.validateResolution({ ...RES, goodwill_type: "comped_visit", goodwill_amount: "84.50" }).resolution.goodwill_amount, 84.5);
+// An amount with nothing to attach it to would quietly inflate the total spend.
+check("an amount with no goodwill type is refused",
+  R.validateResolution({ ...RES, goodwill_amount: 40 }).ok, false);
+check("an amount against 'nothing' is refused",
+  R.validateResolution({ ...RES, goodwill_type: "none", goodwill_amount: 40 }).ok, false);
+check("a negative amount is refused",
+  R.validateResolution({ ...RES, goodwill_type: "gift", goodwill_amount: -5 }).ok, false);
+
+// Closing a case nobody rang has to say why, on the same form.
+check("an uncontacted case needs a no-contact reason",
+  R.validateResolution(RES, { requireNoContactReason: true }).ok, false);
+check("and accepts a valid one",
+  R.validateResolution({ ...RES, no_contact_reason: "member_declined" }, { requireNoContactReason: true }).ok, true);
+check("but not an invented one",
+  R.validateResolution({ ...RES, no_contact_reason: "busy" }, { requireNoContactReason: true }).ok, false);
+
+// --- the reporting rollup
+const summary = R.resolutionSummary([
+  { root_cause: "service_speed",   action_taken: "coached_staff",  goodwill_type: "comped_visit",  goodwill_amount: 80 },
+  { root_cause: "service_speed",   action_taken: "staffing_changed" },
+  { root_cause: "service_speed",   action_taken: "coached_staff",  goodwill_type: "comped_item",   goodwill_amount: 20 },
+  { root_cause: "food_quality",    action_taken: "supplier_or_stock" },
+  { root_cause: "cleanliness",     action_taken: "process_changed", goodwill_type: "none" },
+]);
+check("counts every resolution", summary.resolved, 5);
+check("the biggest cause comes first", summary.root_causes[0].key, "service_speed");
+check("with its share", summary.root_causes[0].pct, 60);
+check("causes are labelled for display", summary.root_causes[0].label, "Slow service");
+check("actions are tallied too", summary.actions_taken[0].key, "coached_staff");
+check("goodwill totals", summary.goodwill_total, 100);
+check("only the cases that cost something are counted", summary.goodwill_cases, 2);
+// Averaged over the two that cost money, not over all five — otherwise the
+// figure describes how often the club spends, not how much.
+check("the average is per paying case", summary.goodwill_average, 50);
+check("a period with no spend reports zero, and no average",
+  [R.resolutionSummary([{ root_cause: "other", action_taken: "no_action" }]).goodwill_total,
+   R.resolutionSummary([{ root_cause: "other", action_taken: "no_action" }]).goodwill_average], [0, null]);
+check("an empty period does not divide by zero", R.resolutionSummary([]).resolved, 0);
+
 // -------------------------------------------------------------- the queue ---
 
 const q = [

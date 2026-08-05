@@ -1295,22 +1295,44 @@
       </div>
     </div>
 
-    <!-- Resolving without ever contacting the member has to be a stated
-         choice rather than the silent default it used to be. -->
-    <div class="modal-overlay hidden" id="noContactModal" onclick="if(event.target===this)closeNoContact()">
+    <!-- Closing a case. Captures what went wrong and what was done about it —
+         a case closed with only a timestamp answers nothing three months
+         later. Also carries the no-contact reason when nobody rang. -->
+    <div class="modal-overlay hidden" id="resolveModal" onclick="if(event.target===this)closeResolve()">
       <div class="modal">
-        <h3>Close without contacting <span id="noContactWho">the member</span>?</h3>
-        <div class="panel-sub" style="margin-top:-8px;margin-bottom:14px;">
-          Nobody has spoken to them about this. If that is right, say why — it keeps
-          the recovery figures honest instead of counting this as handled.
+        <h3>Close this case</h3>
+        <div class="panel-sub" style="margin-top:-8px;margin-bottom:14px;" id="resolveSub"></div>
+
+        <div class="form-group" id="noContactGroup" style="display:none;">
+          <label>Nobody spoke to <span id="resolveWho">the member</span> — why?</label>
+          <select class="field" id="resolveNoContact"></select>
+        </div>
+
+        <div class="form-group">
+          <label>What went wrong</label>
+          <select class="field" id="resolveRootCause"></select>
         </div>
         <div class="form-group">
-          <label>Reason</label>
-          <select class="field" id="noContactReason"></select>
+          <label>What you did about it</label>
+          <select class="field" id="resolveAction"></select>
         </div>
+        <div class="form-group">
+          <label>Did it cost anything</label>
+          <div style="display:flex;gap:8px;">
+            <select class="field" id="resolveGoodwill" style="flex:2;" onchange="toggleGoodwillAmount()"></select>
+            <input class="field" id="resolveGoodwillAmount" style="flex:1;display:none;"
+                   type="number" min="0" step="0.01" placeholder="Amount">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notes (optional)</label>
+          <textarea class="field" id="resolveNotes" rows="3" placeholder="What was agreed, what changed"></textarea>
+        </div>
+
+        <div id="resolveResult" style="font-size:12px;margin-top:6px;"></div>
         <div class="modal-actions">
-          <button class="btn-secondary" onclick="closeNoContact()">Cancel</button>
-          <button class="btn-primary" onclick="confirmNoContact()">Close alert</button>
+          <button class="btn-secondary" onclick="closeResolve()">Cancel</button>
+          <button class="btn-primary" id="resolveSave" onclick="saveResolve()">Close case</button>
         </div>
       </div>
     </div>
@@ -2161,18 +2183,32 @@
         actionHtml = `<select class="assign-dropdown" onchange="assignAlertFromDropdown('${a.alert_id}', this)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
             <option value="">Assign to...</option>
           </select>
-          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}')">Resolve</button>`;
+          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}','${jsAttr(name)}',${Boolean(a.first_contact_at)})">Resolve</button>`;
       } else if(a.status === 'assigned'){
         actionHtml = `<select class="assign-dropdown" onchange="assignAlertFromDropdown('${a.alert_id}', this)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
             <option value="">${a.assigned_to || 'Reassign...'}</option>
           </select>
-          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}')">Resolve</button>`;
+          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}','${jsAttr(name)}',${Boolean(a.first_contact_at)})">Resolve</button>`;
       } else {
         actionHtml = `<button class="btn-mini resolved" onclick="reopenAlert('${a.alert_id}')">Resolved</button>`;
       }
 
       const summaryHtml = a.ai_summary
         ? `<div style="font-size:11.5px;color:var(--brass);margin-top:4px;font-style:italic;">${esc(a.ai_summary)}</div>`
+        : '';
+
+      // What was done about it. Only meaningful once a case is closed, and the
+      // whole reason for capturing it is that somebody reads it back later.
+      const r = (a.case_resolutions || []).find(x => !x.superseded_at);
+      const resolutionHtml = r
+        ? `<div class="outreach-log"><div class="entry">`
+          + `<b>${esc(RESOLVE_FALLBACK.root_causes[r.root_cause] || r.root_cause)}</b>`
+          + ` → ${esc(RESOLVE_FALLBACK.actions_taken[r.action_taken] || r.action_taken)}`
+          + (r.goodwill_amount ? ` · $${esc(Number(r.goodwill_amount).toFixed(2))} ${esc(RESOLVE_FALLBACK.goodwill_types[r.goodwill_type] || '')}` : '')
+          + (r.resolved_by_name ? ` · ${esc(r.resolved_by_name)}` : '')
+          + `</div>`
+          + (r.notes ? `<div class="entry">${esc(r.notes)}</div>` : '')
+          + `</div>`
         : '';
       const suggestBtn = a.status !== 'resolved'
         ? `<button class="btn-mini" style="margin-left:4px;" onclick="getSuggestedResponse('${a.alert_id}',this)">AI Suggest</button>`
@@ -2199,6 +2235,7 @@
           <div class="meta">${sevBadge} ${slaHtml}<span style="vertical-align:middle;">${esc(metaBits)}</span></div>
           ${summaryHtml}
           ${comment ? `<div class="quote">\u201C${esc(comment)}\u201D</div>` : ''}
+          ${resolutionHtml}
           <div class="ai-response-area" id="aiResponse_${a.alert_id}"></div>
         </div>
         <div class="alert-action">${actionHtml}${logBtn}${suggestBtn}</div>
@@ -2343,7 +2380,7 @@
         </div>
         <div class="alert-action">
           <button class="btn-mini" style="background:var(--brass);" onclick="openLogCall('${a.alert_id}','${jsAttr(name)}')">Log call</button>
-          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}')">Resolve</button>
+          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}','${jsAttr(name)}',${Boolean(a.first_contact_at)})">Resolve</button>
         </div>
       </div>`;
     }).join('');
@@ -2428,17 +2465,107 @@
     refreshAlertsView();
   }
 
-  let noContactState = { alertId: null };
+  // Closing a case. One modal, whether or not the member was contacted — the
+  // no-contact reason is just another field on it when it applies.
+  let resolveState = { alertId: null, contacted: true, meta: null };
 
-  function closeNoContact(){ document.getElementById('noContactModal').classList.add('hidden'); }
+  const RESOLVE_FALLBACK = {
+    root_causes: { service_speed:'Slow service', service_attitude:'Staff manner or attentiveness',
+      food_quality:'Food or drink quality', food_availability:'Ran out / not available',
+      cleanliness:'Cleanliness or upkeep', booking_error:'Booking or reservation error',
+      billing_error:'Billing error', facility:'Facility or equipment',
+      staffing_level:'Understaffed at the time',
+      member_expectation:'Nothing went wrong — expectation mismatch', other:'Something else' },
+    actions_taken: { coached_staff:'Coached the staff involved', staffing_changed:'Changed the rota or staffing',
+      process_changed:'Changed a process', supplier_or_stock:'Supplier or stock fixed',
+      facility_fixed:'Facility repaired or replaced', billing_corrected:'Corrected the billing',
+      goodwill_only:'Goodwill gesture, no underlying fix needed',
+      explained_only:'Explained, nothing to change', no_action:'No action taken' },
+    goodwill_types: { none:'Nothing', comped_item:'Comped an item', comped_visit:'Comped the visit',
+      account_credit:'Credited their account', gift:'Gift or gesture', other:'Something else' },
+    reasons: {},
+  };
 
-  async function confirmNoContact(){
-    const reason = document.getElementById('noContactReason').value;
-    await apiCall('/alerts/' + noContactState.alertId + '/resolve', {
-      method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ no_contact_reason: reason }),
+  function fillSelect(id, options, placeholder){
+    const sel = document.getElementById(id);
+    sel.innerHTML = (placeholder ? `<option value="">${esc(placeholder)}</option>` : '')
+      + Object.entries(options || {}).map(([k, label]) =>
+          `<option value="${esc(k)}">${esc(label)}</option>`).join('');
+  }
+
+  function openResolve(id, memberName, contacted, meta){
+    resolveState = { alertId: id, contacted: contacted !== false, meta: meta || RESOLVE_FALLBACK };
+    const m = resolveState.meta;
+
+    document.getElementById('resolveResult').textContent = '';
+    document.getElementById('resolveNotes').value = '';
+    document.getElementById('resolveGoodwillAmount').value = '';
+    document.getElementById('resolveGoodwillAmount').style.display = 'none';
+
+    fillSelect('resolveRootCause', m.root_causes, 'Pick one…');
+    fillSelect('resolveAction',    m.actions_taken, 'Pick one…');
+    fillSelect('resolveGoodwill',  m.goodwill_types || RESOLVE_FALLBACK.goodwill_types);
+
+    const needsReason = !resolveState.contacted;
+    document.getElementById('noContactGroup').style.display = needsReason ? '' : 'none';
+    if(needsReason){
+      document.getElementById('resolveWho').textContent = memberName || 'the member';
+      fillSelect('resolveNoContact', Object.keys(m.reasons || {}).length ? m.reasons : RESOLVE_FALLBACK.reasons, 'Pick one…');
+    }
+
+    document.getElementById('resolveSub').textContent = needsReason
+      ? 'Nobody has spoken to them about this. Say why, and what was done.'
+      : 'Recorded against the case so the club can see what keeps going wrong.';
+
+    document.getElementById('resolveModal').classList.remove('hidden');
+  }
+
+  function toggleGoodwillAmount(){
+    const v = document.getElementById('resolveGoodwill').value;
+    const amt = document.getElementById('resolveGoodwillAmount');
+    const spent = v && v !== 'none';
+    amt.style.display = spent ? '' : 'none';
+    if(!spent) amt.value = '';
+  }
+
+  function closeResolve(){ document.getElementById('resolveModal').classList.add('hidden'); }
+
+  async function saveResolve(){
+    const out = document.getElementById('resolveResult');
+    const body = {
+      root_cause:  document.getElementById('resolveRootCause').value,
+      action_taken: document.getElementById('resolveAction').value,
+      goodwill_type: document.getElementById('resolveGoodwill').value || undefined,
+      goodwill_amount: document.getElementById('resolveGoodwillAmount').value || undefined,
+      notes: document.getElementById('resolveNotes').value || undefined,
+    };
+    if(!resolveState.contacted) body.no_contact_reason = document.getElementById('resolveNoContact').value;
+
+    if(!body.root_cause || !body.action_taken){
+      out.textContent = 'Pick what went wrong and what you did about it.';
+      out.style.color = 'var(--brick)';
+      return;
+    }
+    if(!resolveState.contacted && !body.no_contact_reason){
+      out.textContent = 'Say why nobody was contacted.';
+      out.style.color = 'var(--brick)';
+      return;
+    }
+
+    const btn = document.getElementById('resolveSave');
+    btn.disabled = true;
+    const res = await apiCall('/alerts/' + resolveState.alertId + '/resolve', {
+      method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
     });
-    closeNoContact();
+    btn.disabled = false;
+
+    const data = res ? await res.json() : {};
+    if(!res || !res.ok){
+      out.textContent = data.error || 'Could not close the case.';
+      out.style.color = 'var(--brick)';
+      return;
+    }
+    closeResolve();
     refreshAlertsView();
   }
 
@@ -2447,22 +2574,11 @@
     if(alertsFilter === 'recovery') loadRecoveryQueue(); else loadAlerts();
   }
 
-  async function resolveAlert(id){
-    const res = await apiCall('/alerts/' + id + '/resolve', { method: 'PUT' });
-    // 409 means nobody has closed this back to the member. Rather than
-    // refusing outright — which just teaches people to log a call that never
-    // happened — ask why, and record the answer.
-    if(res && res.status === 409){
-      const data = await res.json();
-      noContactState = { alertId: id };
-      document.getElementById('noContactWho').textContent = data.member_name || 'the member';
-      const sel = document.getElementById('noContactReason');
-      sel.innerHTML = Object.entries(data.reasons || {})
-        .map(([k, label]) => `<option value="${esc(k)}">${esc(label)}</option>`).join('');
-      document.getElementById('noContactModal').classList.remove('hidden');
-      return;
-    }
-    refreshAlertsView();
+  // Resolve always opens the modal now. The server is still the authority:
+  // a 409 means nobody was contacted and a 422 means the resolution was
+  // incomplete, and either way it hands back the lists to show.
+  async function resolveAlert(id, memberName, contacted){
+    openResolve(id, memberName, contacted);
   }
 
   async function reopenAlert(id){

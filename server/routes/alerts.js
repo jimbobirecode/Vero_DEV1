@@ -15,7 +15,8 @@ router.get("/", async (req, res) => {
   let query = supabase
     .from("case_alerts")
     .select(
-      "*, outlets(name), survey_responses(q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, visits(visit_date, member_id, guest_name, members(first_name, last_name)))",
+      "*, outlets(name), case_resolutions(root_cause, action_taken, notes, goodwill_type, goodwill_amount, resolved_by_name, resolved_at, superseded_at), " +
+      "survey_responses(q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, visits(visit_date, member_id, guest_name, members(first_name, last_name)))",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })
@@ -25,7 +26,21 @@ router.get("/", async (req, res) => {
     query = query.eq("status", req.query.status);
   }
 
-  const { data, count, error } = await query;
+  let { data, count, error } = await query;
+
+  // case_resolutions only exists once its migration has run. Rather than the
+  // whole screen failing on a club that has not applied it yet, drop the
+  // embed and retry — the list is the more important of the two.
+  if (error && /case_resolutions/i.test(error.message || "")) {
+    ({ data, count, error } = await supabase
+      .from("case_alerts")
+      .select(
+        "*, outlets(name), survey_responses(q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, submitted_at, visits(visit_date, member_id, guest_name, members(first_name, last_name)))",
+        { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1));
+  }
+
   if (error) return res.status(500).json({ error: error.message });
   res.json({ alerts: data, total: count });
 });
@@ -290,6 +305,41 @@ router.put("/:id/resolve", async (req, res) => {
     });
   }
 
+  // What was wrong and what was done about it. Required once the migration is
+  // in: a case closed with only a timestamp answers nothing later, and "we
+  // will fill it in properly from next month" never happens.
+  const resReady = await store.resolutionsReady();
+  let saved = null;
+
+  if (resReady.ok) {
+    const valid = recovery.validateResolution(req.body || {}, {
+      requireNoContactReason: !alert.first_contact_at,
+    });
+    if (!valid.ok) {
+      return res.status(422).json({
+        error: valid.errors.join("; "),
+        needs_resolution: true,
+        root_causes: recovery.ROOT_CAUSES,
+        actions_taken: recovery.ACTIONS_TAKEN,
+        goodwill_types: recovery.GOODWILL_TYPES,
+        reasons: recovery.NO_CONTACT_REASONS,
+        member_name: alert.member_name,
+        contacted: Boolean(alert.first_contact_at),
+      });
+    }
+
+    // Written before the alert is marked resolved. The other order would risk
+    // a closed case with no account of what was done, which is the exact hole
+    // this fills.
+    const result = await store.saveResolution(
+      alert,
+      { ...valid.resolution, no_contact_reason: reason },
+      { staff_id: req.user?.staff_id || null, name: req.user?.name || req.body?.resolved_by_name || null },
+    );
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    saved = result.resolution;
+  }
+
   const update = { status: "resolved", resolved_at: new Date().toISOString() };
   if (!alert.first_contact_at && reason) update.no_contact_reason = reason;
 
@@ -297,7 +347,51 @@ router.put("/:id/resolve", async (req, res) => {
     .from("case_alerts").update(update).eq("alert_id", req.params.id);
   if (error) return res.status(500).json({ error: error.message });
 
-  res.json({ updated: true, closed_with_member: Boolean(alert.first_contact_at) });
+  res.json({
+    updated: true,
+    closed_with_member: Boolean(alert.first_contact_at),
+    resolution: saved,
+    resolution_tracking: resReady.ok,
+  });
+});
+
+// GET /api/alerts/:id/resolution — the live resolution, plus any superseded
+// ones. A case that has been reopened and closed twice is exactly the case
+// worth reading in full.
+router.get("/:id/resolution", async (req, res) => {
+  const ready = await store.resolutionsReady();
+  if (!ready.ok) return res.status(503).json({ error: ready.error });
+
+  const history = await store.resolutionHistory(req.params.id);
+  res.json({
+    current: history.find((r) => !r.superseded_at) || null,
+    history: history.filter((r) => r.superseded_at),
+    root_causes: recovery.ROOT_CAUSES,
+    actions_taken: recovery.ACTIONS_TAKEN,
+    goodwill_types: recovery.GOODWILL_TYPES,
+  });
+});
+
+// GET /api/alerts/resolution-stats?days=90 — what keeps going wrong, what the
+// club keeps doing about it, and what that costs.
+router.get("/resolution-stats", async (req, res) => {
+  const ready = await store.resolutionsReady();
+  if (!ready.ok) return res.status(503).json({ error: ready.error });
+
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 1), 365);
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  // Superseded resolutions are excluded: a fix that did not hold should not be
+  // counted alongside the one that replaced it.
+  const { data, error } = await supabase
+    .from("case_resolutions")
+    .select("root_cause, action_taken, goodwill_type, goodwill_amount, contacted_member, resolved_at")
+    .is("superseded_at", null)
+    .gte("resolved_at", since)
+    .limit(2000);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ period_days: days, ...recovery.resolutionSummary(data || []) });
 });
 
 // PUT /api/alerts/:id/reopen — reopen a resolved alert.
@@ -306,6 +400,12 @@ router.put("/:id/resolve", async (req, res) => {
 // fix was not good enough, not that the call never took place. Clearing it
 // would quietly rewrite the recovery history.
 router.put("/:id/reopen", async (req, res) => {
+  // The resolution stays on the record, marked superseded. Reopening means the
+  // fix did not hold, and when the same complaint comes back next month the
+  // most useful thing to read is what was tried last time.
+  const resReady = await store.resolutionsReady();
+  if (resReady.ok) await store.supersedeResolution(req.params.id);
+
   const { error } = await supabase
     .from("case_alerts")
     .update({
