@@ -88,8 +88,34 @@ router.put("/:id/assign", async (req, res) => {
     const severity = alert?.severity || fallback?.severity;
     const outlet = alert?.outlet_name || fallback?.outlets?.name || "Unknown outlet";
     const url = dashboardUrl();
-    const subject = `[Club Vero] ${alert?.severity?.toUpperCase()} alert assigned to you — ${outlet}`;
-    const body = `Hi ${staffName},\n\nA ${alert?.severity} severity alert at ${outlet} has been assigned to you.\n\nPlease review and resolve it at your earliest convenience.${url ? `\n\nView in dashboard: ${url}` : ""}\n\n${CLUB_NAME}`;
+    const subject = `[Club Vero] ${String(severity || "").toUpperCase()} alert assigned to you — ${outlet}`;
+
+    let body = `Hi ${staffName},\n\nA ${severity} severity alert at ${outlet} has been assigned to you.\n`;
+
+    // Who to ring, by when, and a one-tap way to log it. A manager does this
+    // from a phone thirty seconds after hanging up — an email that only links
+    // to a dashboard collects nothing, and a recovery metric built on nothing
+    // is worse than no metric.
+    if (alert) {
+      const withDue = await store.ensureDueDate(alert, await store.loadSlaSettings());
+      const token = await store.ensureRecoveryToken(alert.alert_id, alert.recovery_token);
+
+      if (withDue.member_name) {
+        body += `\nMember: ${withDue.member_name}`;
+        if (withDue.member_phone) body += `\nPhone: ${withDue.member_phone}`;
+        else if (withDue.member_email) body += `\nEmail: ${withDue.member_email}`;
+        else body += `\n(No phone or email on file — this member cannot be reached.)`;
+      }
+      if (withDue.comment) body += `\nThey said: "${withDue.comment}"`;
+      if (withDue.contact_due_at) {
+        body += `\n\nCall them by ${new Date(withDue.contact_due_at).toUTCString()}.`;
+      }
+      if (token && url) {
+        body += `\n\nOnce you have called, log it in one tap:\n${url}/c/${token}`;
+      }
+    }
+
+    body += `\n${url ? `\nView in dashboard: ${url}` : ""}\n\n${CLUB_NAME}`;
 
     notifyStaffMember(staffId, subject, body).catch((e) =>
       console.error("Alert assignment notification failed:", e.message)
