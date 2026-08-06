@@ -2,6 +2,20 @@ const express = require("express");
 const router = express.Router();
 const { supabase } = require("../lib/supabase");
 
+// Validate a nominated owner rather than trusting the id. A stale one would
+// silently send every alert for the outlet to nobody.
+async function resolveOwner(ownerStaffId) {
+  if (!ownerStaffId) return { value: null };
+  const { data: staff } = await supabase
+    .from("staff")
+    .select("staff_id, name, active")
+    .eq("staff_id", ownerStaffId)
+    .maybeSingle();
+  if (!staff) return { error: "That team member no longer exists" };
+  if (staff.active === false) return { error: `${staff.name} is not an active team member` };
+  return { value: staff.staff_id };
+}
+
 // GET /api/outlets?active=true
 router.get("/", async (req, res) => {
   let query = supabase
@@ -20,7 +34,7 @@ router.get("/", async (req, res) => {
 
 // POST /api/outlets
 router.post("/", async (req, res) => {
-  const { name, min_spend_threshold, frequency_limit_days } = req.body;
+  const { name, min_spend_threshold, frequency_limit_days, owner_staff_id } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: "Outlet name is required" });
   }
@@ -34,21 +48,31 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "Re-survey days must be a whole number of 1 or more" });
   }
 
+  const owner = await resolveOwner(owner_staff_id);
+  if (owner.error) return res.status(400).json({ error: owner.error });
+
   const row = {
     name: name.trim(),
     min_spend_threshold: spend,
     frequency_limit_days: days,
     active: true,
   };
+  // Who case alerts for this location go to. Null is fine — the alert falls
+  // back to notifying managers.
+  if (owner.value) row.owner_staff_id = owner.value;
 
-  const { data, error } = await supabase.from("outlets").insert(row).select().single();
+  let { data, error } = await supabase.from("outlets").insert(row).select().single();
+  if (error && /owner_staff_id/.test(error.message || "")) {
+    delete row.owner_staff_id;
+    ({ data, error } = await supabase.from("outlets").insert(row).select().single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
 });
 
 // PUT /api/outlets/:id
 router.put("/:id", async (req, res) => {
-  const { name, min_spend_threshold, frequency_limit_days, active, template_id } = req.body;
+  const { name, min_spend_threshold, frequency_limit_days, active, template_id, owner_staff_id } = req.body;
   const update = {};
 
   // Reject bad input rather than coercing it. A number input reports an empty
@@ -73,6 +97,14 @@ router.put("/:id", async (req, res) => {
     update.frequency_limit_days = days;
   }
   if (active !== undefined) update.active = Boolean(active);
+
+  // Who case alerts raised against this outlet are assigned to. Empty means
+  // nobody, and the alert falls back to notifying managers.
+  if (owner_staff_id !== undefined) {
+    const owner = await resolveOwner(owner_staff_id);
+    if (owner.error) return res.status(400).json({ error: owner.error });
+    update.owner_staff_id = owner.value;
+  }
 
   // An outlet can nominate its own survey template. Empty string or null means
   // "use the default for the visit type" — validate rather than trust the id,

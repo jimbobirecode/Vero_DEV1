@@ -326,7 +326,7 @@
   .settings-row .lbl{font-size:13px;font-weight:500;}
   .settings-row .sub{font-size:11.5px;color:var(--ink-soft);margin-top:2px;}
   .role-table-row{display:grid;grid-template-columns:1.2fr 1.4fr 140px 30px;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px;}
-  .outlet-row{grid-template-columns:1.1fr 110px 110px 1.2fr 30px;}
+  .outlet-row{grid-template-columns:1.1fr 96px 96px 1.1fr 1.1fr 30px;}
   /* Servers carry an extra column for whether they are reachable at all. */
   .server-row{grid-template-columns:1fr 150px 1.5fr 96px 30px;}
   .server-row input.field{padding:5px 7px;font-size:12px;}
@@ -1599,7 +1599,7 @@
 
       <div class="panel">
         <h2>Outlets</h2>
-        <div class="panel-sub">Everything about your outlets lives here — the name, the minimum spend that qualifies for a survey, how many days before a member can be re-surveyed, and which questions they are asked. Leave the questions on "Default for visit type" for ordinary dining; choose a template when an outlet needs its own, such as a racquets centre or a lesson. Changes save automatically.</div>
+        <div class="panel-sub">Everything about your outlets lives here — the name, the minimum spend that qualifies for a survey, how many days before a member can be re-surveyed, which questions they are asked, and who answers for the place. Leave the questions on "Default for visit type" for ordinary dining; choose a template when an outlet needs its own, such as a racquets centre or a lesson. <strong>Alerts go to</strong> is who a case alert is assigned to when a poor response comes in from this outlet — they are emailed straight away rather than waiting for someone to spot it unassigned. Leave it on "Nobody" and the managers are notified instead. Changes save automatically.</div>
         <div id="outletList"></div>
         <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:12px;">
           <h3 style="font-size:13px;margin:0 0 10px;">Add outlet</h3>
@@ -2100,7 +2100,7 @@
     if(tab==='training') loadTrainingPlans();
     if(tab==='alerts') loadAlerts();
     if(tab==='insights') loadInsights();
-    if(tab==='settings') { loadSurveyTemplates().then(loadOutlets); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
+    if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
     if(tab==='golf') { loadGolfOverview(); loadGolfSurveyLog(); loadGolfTemplate(); loadCrossover(); }
   }
@@ -5488,6 +5488,10 @@
       title: 'How Visits works',
       text: 'Populated by: POS uploads (Upload tab) or manual entry here. Each visit links a member or guest to an outlet and date. The system checks whether spend qualifies for a survey against the outlet threshold set in Settings → Outlets. Qualifying visits appear in the Survey Queue.'
     },
+    outlets_alerts: {
+      title: 'How alert routing works',
+      text: 'Each outlet can name the person who answers for it, under Settings → Outlets → "Alerts go to". When a poor response comes in, the case alert is assigned to that person the moment it is raised and emailed directly to them — not left sitting unassigned until somebody notices it in the next digest. An outlet with nobody named, an event survey (which has no outlet), or an owner who has been deactivated all fall back to notifying the managers, so an alert never reaches nobody. If the owner has no email on file the alert is still assigned to them, and the managers are told as well.'
+    },
     queue: {
       title: 'How the Survey Queue works',
       text: 'Everyone here qualified on spend for their outlet and has not been surveyed there inside its re-survey window. The banner tells you exactly when the batch sends and how many go by SMS versus email — that time is set in Settings → Survey delivery, and nothing sends between 8pm and 8am. Anyone who cannot be reached is listed at the bottom with the reason, usually a missing phone and email, an opt-out, or a member ID from the POS that is not in your member list. Use "Send now" to send one immediately, or "Remove" to take someone out of the batch.'
@@ -5590,7 +5594,10 @@
     // is asked when they visit the outlet, and offering the team's own survey
     // here would let it be sent to guests.
     const tplOpts = (surveyTemplates || []).filter(t => t.active !== false && t.survey_type !== 'staff');
-    container.innerHTML = '<div class="role-table-row outlet-row head"><span>Name</span><span>Min spend ($)</span><span>Re-survey (days)</span><span>Survey questions</span><span></span></div>' +
+    // Anyone who can be assigned an alert. Shift managers are included: they
+    // run a section and are usually the person on the floor when it happens.
+    const ownerOpts = (staffCache || []).filter(m => m.active !== false);
+    container.innerHTML = '<div class="role-table-row outlet-row head"><span>Name</span><span>Min spend ($)</span><span>Re-survey (days)</span><span>Survey questions</span><span>Alerts go to</span><span></span></div>' +
       outlets.map(o => `<div class="role-table-row outlet-row">
         <input class="field" value="${o.name.replace(/"/g,'&quot;')}" onchange="updateOutlet('${o.outlet_id}',{name:this.value},this)">
         <input class="field" type="number" step="0.01" min="0" value="${parseFloat(o.min_spend_threshold||0).toFixed(2)}" onchange="updateOutlet('${o.outlet_id}',{min_spend_threshold:this.value},this)">
@@ -5598,6 +5605,10 @@
         <select class="field" onchange="updateOutlet('${o.outlet_id}',{template_id:this.value},this)" title="Which questions members are asked after visiting this outlet">
           <option value="">Default for visit type</option>
           ${tplOpts.map(t => `<option value="${t.template_id}" ${o.template_id===t.template_id?'selected':''}>${esc(t.name)}</option>`).join('')}
+        </select>
+        <select class="field" onchange="updateOutlet('${o.outlet_id}',{owner_staff_id:this.value},this)" title="Case alerts raised for this outlet are assigned to this person and emailed to them">
+          <option value="">Nobody — notify managers</option>
+          ${ownerOpts.map(m => `<option value="${jsAttr(m.staff_id)}" ${o.owner_staff_id===m.staff_id?'selected':''}>${esc(m.name)}</option>`).join('')}
         </select>
         <span class="remove-x" onclick="removeOutlet('${jsAttr(o.outlet_id)}','${jsAttr(o.name)}')" title="Remove">✕</span>
       </div>`).join('');
@@ -5608,10 +5619,16 @@
     const key = Object.keys(fields)[0];
     const raw = String(fields[key] ?? '').trim();
 
+    // Empty means something for the two dropdowns — "default questions" and
+    // "nobody, notify managers" — so they are exempt. Without this you could
+    // never clear an outlet's template back to the default, or unassign its
+    // owner: the guard bounced the change and reloaded the old value.
+    const blankIsAValue = key === 'template_id' || key === 'owner_staff_id';
+
     // A number input reports '' for anything it considers invalid. Sending
     // that used to make the server fall back to a default and overwrite the
     // real value, which looked like the field "resetting itself".
-    if(raw === ''){
+    if(raw === '' && !blankIsAValue){
       note.innerHTML = '<span style="color:var(--brick);">Value can\'t be blank — restoring previous value.</span>';
       setTimeout(()=>{ note.innerHTML=''; }, 3000);
       loadOutlets();

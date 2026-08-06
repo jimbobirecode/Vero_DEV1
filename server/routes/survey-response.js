@@ -1,7 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const { supabase } = require("../lib/supabase");
-const { notifyManagers, dashboardUrl } = require("../lib/notify");
+const { notifyManagers, notifyStaffMember, dashboardUrl } = require("../lib/notify");
+const { routeAlert } = require("../lib/alert-routing");
 const { CLUB_NAME } = require("../lib/club-config");
 const { tagComment, generateAlertSummary } = require("../lib/ai");
 const { mapAnswersToColumns, missingRequired } = require("../lib/response-mapping");
@@ -42,7 +43,7 @@ router.post("/:token", async (req, res) => {
   let existing, findErr;
   ({ data: existing, error: findErr } = await supabase
     .from("survey_responses")
-    .select("response_id, submitted_at, survey_templates(questions), visits(outlet_id, outlets(name), members(first_name, last_name))")
+    .select("response_id, submitted_at, survey_templates(questions), visits(outlet_id, outlets(outlet_id, name, owner_staff_id), members(first_name, last_name))")
     .eq("survey_token", req.params.token)
     .maybeSingle());
 
@@ -50,7 +51,18 @@ router.post("/:token", async (req, res) => {
   if (findErr && /template|survey_templates/i.test(findErr.message || "")) {
     ({ data: existing, error: findErr } = await supabase
       .from("survey_responses")
-      .select("response_id, submitted_at, visits(outlet_id, outlets(name), members(first_name, last_name))")
+      .select("response_id, submitted_at, visits(outlet_id, outlets(outlet_id, name, owner_staff_id), members(first_name, last_name))")
+      .eq("survey_token", req.params.token)
+      .maybeSingle());
+  }
+
+  // ...and so do databases that predate outlets.owner_staff_id. Without it
+  // there is nobody to route to, so the alert simply falls back to notifying
+  // managers, exactly as it did before.
+  if (findErr && /owner_staff_id/.test(findErr.message || "")) {
+    ({ data: existing, error: findErr } = await supabase
+      .from("survey_responses")
+      .select("response_id, submitted_at, visits(outlet_id, outlets(outlet_id, name), members(first_name, last_name))")
       .eq("survey_token", req.params.token)
       .maybeSingle());
   }
@@ -143,12 +155,29 @@ router.post("/:token", async (req, res) => {
       return null;
     });
 
+    // Route by location: the outlet knows who runs it, so the alert is
+    // assigned the moment it is raised rather than waiting for somebody to
+    // notice it unassigned in tomorrow's digest. See lib/alert-routing.js —
+    // every path there ends with somebody being told.
+    const outlet = existing.visits?.outlets ?? null;
+    let owner = null;
+    if (outlet?.owner_staff_id) {
+      const { data } = await supabase
+        .from("staff")
+        .select("staff_id, name, email, active")
+        .eq("staff_id", outlet.owner_staff_id)
+        .maybeSingle();
+      owner = data || null;
+    }
+    const route = routeAlert({ outlet, owner });
+
     const alertInsert = {
       response_id: existing.response_id,
       outlet_id: existing.visits?.outlet_id,
       severity,
-      status: "open",
+      status: route.assignedTo ? "assigned" : "open",
     };
+    if (route.assignedTo) alertInsert.assigned_to_staff_id = route.assignedTo;
     if (aiSummary) alertInsert.ai_summary = aiSummary;
 
     // Start the clock the moment the alert exists. The window to ring the
@@ -168,12 +197,17 @@ router.post("/:token", async (req, res) => {
     // Strip whichever one the error names and retry, rather than losing the
     // alert entirely — an alert that fails to save is a member nobody hears.
     let { error: alertErr } = await supabase.from("case_alerts").insert(alertInsert);
-    for (const col of ["ai_summary", "contact_due_at"]) {
+    for (const col of ["ai_summary", "contact_due_at", "assigned_to_staff_id"]) {
       if (!alertErr || !alertErr.message || !alertErr.message.includes(col)) continue;
       delete alertInsert[col];
+      // Without somewhere to record the assignment the alert is open, not
+      // assigned — the status would otherwise claim an owner it has lost.
+      if (col === "assigned_to_staff_id") alertInsert.status = "open";
       ({ error: alertErr } = await supabase.from("case_alerts").insert(alertInsert));
     }
     if (alertErr) console.error("[alerts] could not create alert:", alertErr.message);
+
+    console.log(`[alerts] ${severity} at ${outlet?.name || "no outlet"} — ${route.reason}`);
 
     if (severity === "high" || severity === "medium") {
       const url = dashboardUrl();
@@ -184,13 +218,20 @@ router.post("/:token", async (req, res) => {
       body += `NPS: ${q1_nps}/10\nOverall: ${q2_overall_stars}/5\nFood: ${q3_food_stars}/5\nService: ${q4_service_stars ?? "N/A"}/5`;
       if (commentText) body += `\nComment: "${commentText}"`;
       if (aiTags?.tags?.length) body += `\nTags: ${aiTags.tags.join(", ")}`;
-      body += `\n\nThis alert needs to be assigned and resolved.`;
+      body += route.assignedTo
+        ? `\n\nThis alert is assigned to you as the owner of ${outletName || "this outlet"}.`
+        : `\n\nThis alert needs to be assigned and resolved — ${route.reason}.`;
       if (url) body += `\n\nView in dashboard: ${url}`;
       body += `\n\n${CLUB_NAME}`;
 
-      notifyManagers(subject, body).catch((e) =>
-        console.error("Alert notification failed:", e.message)
-      );
+      // Straight to the person who can act on it. Managers are the fallback,
+      // not the default: an alert about the halfway house that only ever
+      // reaches the GM waits for them to forward it.
+      const deliver = route.notify === "owner"
+        ? notifyStaffMember(route.assignedTo, subject, body)
+        : notifyManagers(subject, body);
+
+      deliver.catch((e) => console.error("Alert notification failed:", e.message));
     }
   }
 
