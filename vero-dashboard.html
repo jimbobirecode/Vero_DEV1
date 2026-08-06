@@ -2247,17 +2247,17 @@
         ? `<span class="sla-chip ${esc(sla)}">${esc(slaLabel || sla)}</span> `
         : '';
 
-      let actionHtml = '';
-      if(a.status === 'open'){
-        actionHtml = `<select class="assign-dropdown" onchange="assignAlertFromDropdown('${a.alert_id}', this)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
-            <option value="">Assign to...</option>
-          </select>
-          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}','${jsAttr(name)}',${Boolean(a.first_contact_at)})">Resolve</button>`;
-      } else if(a.status === 'assigned'){
-        actionHtml = `<select class="assign-dropdown" onchange="assignAlertFromDropdown('${a.alert_id}', this)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
-            <option value="">${a.assigned_to || 'Reassign...'}</option>
-          </select>
-          <button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}','${jsAttr(name)}',${Boolean(a.first_contact_at)})">Resolve</button>`;
+      // Split into three so the row reads in the order the work happens:
+      // assign it, ring the member, then close it. Resolve used to sit
+      // immediately after the dropdown with Log call to its right, which put
+      // the closing action before the one that earns it.
+      let assignHtml = '', resolveHtml = '', actionHtml = '';
+      if(a.status === 'open' || a.status === 'assigned'){
+        const firstOption = a.status === 'open' ? 'Assign to...' : (a.assigned_to || 'Reassign...');
+        assignHtml = `<select class="assign-dropdown" onchange="assignAlertFromDropdown('${a.alert_id}', this)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
+            <option value="">${esc(firstOption)}</option>
+          </select>`;
+        resolveHtml = `<button class="btn-mini" style="background:var(--sage);margin-left:4px;" onclick="resolveAlert('${a.alert_id}','${jsAttr(name)}',${Boolean(a.first_contact_at)})">Resolve</button>`;
       } else {
         actionHtml = `<button class="btn-mini resolved" onclick="reopenAlert('${a.alert_id}')">Resolved</button>`;
       }
@@ -2307,7 +2307,7 @@
           ${resolutionHtml}
           <div class="ai-response-area" id="aiResponse_${a.alert_id}"></div>
         </div>
-        <div class="alert-action">${actionHtml}${logBtn}${suggestBtn}</div>
+        <div class="alert-action">${assignHtml}${logBtn}${resolveHtml}${actionHtml}${suggestBtn}</div>
       </div>`;
     }).join('');
 
