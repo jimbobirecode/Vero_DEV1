@@ -10,6 +10,7 @@ const pos = require("../lib/pos");
 const { ingestRows } = require("../lib/pos/ingest");
 const { CLUB_NAME } = require("../lib/club-config");
 const { resolveRecipient } = require("../lib/recipient");
+const { applyMemberCap, parseCapSettings, modalityOf } = require("../lib/send-policy");
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const CLUB_ID = process.env.CLUB_ID;
@@ -172,9 +173,42 @@ router.get("/queue", async (req, res) => {
     .from("club_settings").select("value").eq("key", "survey_send_time").maybeSingle();
   const sendTime = setting?.value || "09:30";
 
+  // The send job's own rules for which of a member's visits actually goes.
+  // Without this the queue promised a survey for the golf AND the dinner, and
+  // then one of them silently never arrived.
+  const { data: capRows } = await supabase.from("club_settings").select("key, value");
+  const capSettings = Object.fromEntries((capRows || []).map((r) => [r.key, r.value]));
+  const { cap, windowDays } = parseCapSettings(capSettings);
+
+  const windowStart = new Date(Date.now() - windowDays * 86400000).toISOString();
+  const alreadySent = {};
+  const lastModality = {};
+  {
+    const { data: sent } = await supabase
+      .from("visits")
+      .select("member_id, visitor_type, survey_sent_at")
+      .not("member_id", "is", null)
+      .not("survey_sent_at", "is", null)
+      .order("survey_sent_at", { ascending: false })
+      .limit(5000);
+    for (const r of sent || []) {
+      if (!(r.member_id in lastModality)) lastModality[r.member_id] = modalityOf(r);
+      if (r.survey_sent_at >= windowStart) {
+        alreadySent[r.member_id] = (alreadySent[r.member_id] || 0) + 1;
+      }
+    }
+  }
+
+  const capResult = applyMemberCap(data || [], { cap, windowDays, alreadySent, lastModality });
+  const deferredById = new Map(capResult.deferred.map((d) => [d.visit.visit_id, d.reason]));
+
   // Work out how each row would be delivered, using the same rules the send
   // job applies, so the queue can't promise a send that won't happen.
   const queue = (data || []).map((v) => {
+    const deferredReason = deferredById.get(v.visit_id);
+    if (deferredReason) {
+      return { ...v, channel: null, recipient: null, status: "deferred", blocked_reason: deferredReason };
+    }
     // A member_id the members table has no row for. The join returns null
     // rather than an empty object, so test the row itself — testing
     // first_name flagged a real member who simply had no first name.
@@ -187,6 +221,7 @@ router.get("/queue", async (req, res) => {
   });
 
   const ready = queue.filter((q) => q.status === "ready");
+  const deferred = queue.filter((q) => q.status === "deferred");
   const byOutlet = {};
   for (const q of ready) {
     const name = q.outlets?.name || "Unassigned";
@@ -199,7 +234,11 @@ router.get("/queue", async (req, res) => {
     summary: {
       total: queue.length,
       ready: ready.length,
-      blocked: queue.length - ready.length,
+      // Deferred is not blocked: nothing is wrong with these, they simply lost
+      // the day's rotation or the member's cap. Lumping them in with "cannot
+      // send" would make a working rule look like a fault.
+      deferred: deferred.length,
+      blocked: queue.length - ready.length - deferred.length,
       sms: ready.filter((q) => q.channel === "sms").length,
       email: ready.filter((q) => q.channel === "email").length,
       by_outlet: Object.entries(byOutlet).map(([outlet, count]) => ({ outlet, count }))

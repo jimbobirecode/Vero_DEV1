@@ -1416,6 +1416,44 @@
         </div>
       </div>
 
+      <!-- Cross-modal: what golfers do after the eighteenth. The club records
+           a round and a lunch as unrelated visits; the questions worth asking
+           sit between them. -->
+      <div class="panel" style="margin-top:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <h2 style="display:inline;">Golf &amp; dining crossover</h2>
+            <button class="info-btn" onclick="showInfo('crossover')">?</button>
+          </div>
+          <select id="crossoverDays" class="field" style="width:140px;padding:4px 8px;font-size:12px;" onchange="loadCrossover()">
+            <option value="30">Last 30 days</option>
+            <option value="90" selected>Last 90 days</option>
+            <option value="365">Last 12 months</option>
+          </select>
+        </div>
+        <div class="panel-sub">Measured in member-days, so somebody who ate twice after one round counts once.</div>
+
+        <div class="recovery-strip" id="crossoverStrip" style="margin-top:12px;">
+          <div class="stat"><div class="eyebrow">Loading</div><div class="value">—</div></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;" id="crossoverGrid">
+          <div>
+            <div class="eyebrow" style="font-size:10px;margin-bottom:8px;">Stayed to eat, by day</div>
+            <div id="crossoverDow" style="display:flex;flex-direction:column;gap:5px;"></div>
+          </div>
+          <div>
+            <div class="eyebrow" style="font-size:10px;margin-bottom:8px;">Where golfers eat</div>
+            <div id="crossoverOutlets" style="display:flex;flex-direction:column;gap:5px;"></div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div class="eyebrow" style="font-size:10px;margin-bottom:8px;">Regulars who never stay</div>
+          <div id="crossoverNeverDine" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+        </div>
+      </div>
+
       <div class="panel" style="margin-top:16px;">
         <h2>Upload tee sheet</h2>
         <div class="panel-sub">Upload the day's tee sheet. The system extracts member IDs and names so you can review who will receive the golf survey before sending.</div>
@@ -2033,7 +2071,7 @@
     if(tab==='insights') loadInsights();
     if(tab==='settings') { loadSurveyTemplates().then(loadOutlets); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
-    if(tab==='golf') { loadGolfOverview(); loadGolfSurveyLog(); loadGolfTemplate(); }
+    if(tab==='golf') { loadGolfOverview(); loadGolfSurveyLog(); loadGolfTemplate(); loadCrossover(); }
   }
 
   /* ---------- role switching ---------- */
@@ -2253,6 +2291,75 @@
         sel.appendChild(opt);
       });
     });
+  }
+
+  /* ---------- golf & dining crossover ---------- */
+  // The club logs a round and a lunch as two unrelated visits. This is the
+  // join between them: who stays to eat, what that is worth, and which day
+  // loses them between the eighteenth and the dining room.
+  async function loadCrossover(){
+    const days = document.getElementById('crossoverDays')?.value || '90';
+    const strip = document.getElementById('crossoverStrip');
+    const res = await apiCall('/analytics/crossover?days=' + encodeURIComponent(days));
+    if(!res || !res.ok){
+      strip.innerHTML = '<div class="stat"><div class="eyebrow">Crossover</div><div class="note">Not available.</div></div>';
+      return;
+    }
+    const d = await res.json();
+
+    const pct = (v) => v == null ? '—' : v + '%';
+    // Grouped, because "left on the table" is a five-figure number and
+    // $21246 does not read as twenty-one thousand at a glance.
+    const money = (v) => v == null ? '—'
+      : '$' + Math.round(Number(v)).toLocaleString('en-US');
+
+    const stats = [
+      { eyebrow: 'Golfers who dined', value: pct(d.pct_golfers_who_dined),
+        note: d.golf_days ? `${d.both} of ${d.golf_days} rounds` : 'no rounds in range' },
+      { eyebrow: 'Golf only', value: String(d.golf_only ?? 0),
+        note: 'left without eating' },
+      { eyebrow: 'A golfer’s spend', value: money(d.avg_spend_golfer_who_dined),
+        note: d.spend_uplift == null ? 'nothing to compare' :
+          `${d.spend_uplift >= 0 ? '+' : ''}${money(d.spend_uplift)} vs a diner who didn’t play` },
+      { eyebrow: 'Left on the table', value: money(d.estimated_missed_spend),
+        note: d.missed_dining_days ? `if those ${d.missed_dining_days} had stayed` : '—' },
+    ];
+    strip.innerHTML = stats.map(st =>
+      `<div class="stat"><div class="eyebrow">${esc(st.eyebrow)}</div>`
+      + `<div class="value">${esc(st.value)}</div><div class="note">${esc(st.note)}</div></div>`).join('');
+
+    // A bar per row, so the weak day is visible rather than needing to be
+    // read off a number.
+    const bar = (label, pctVal, sub) => {
+      const w = Math.max(0, Math.min(100, pctVal || 0));
+      return `<div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px;">
+          <span>${esc(label)}</span><span class="mono" style="font-size:11px;">${pctVal == null ? '—' : pctVal + '%'}</span>
+        </div>
+        <div style="height:6px;border-radius:3px;background:var(--line);overflow:hidden;">
+          <div style="height:100%;width:${w}%;background:var(--sage);"></div>
+        </div>
+        ${sub ? `<div style="font-size:10.5px;color:var(--ink-soft);margin-top:2px;">${esc(sub)}</div>` : ''}
+      </div>`;
+    };
+
+    const dow = d.by_day_of_week || [];
+    document.getElementById('crossoverDow').innerHTML = dow.length
+      ? dow.map(b => bar(b.day, b.pct_dined, `${b.both} of ${b.golf_days} rounds`)).join('')
+      : '<div style="font-size:12px;color:var(--ink-soft);">No rounds in this period.</div>';
+
+    const outlets = d.by_outlet || [];
+    document.getElementById('crossoverOutlets').innerHTML = outlets.length
+      ? outlets.map(o => bar(o.outlet, o.pct_of_crossover, `${o.golfer_days} golfer-days`)).join('')
+      : '<div style="font-size:12px;color:var(--ink-soft);">No golfers have eaten in this period.</div>';
+
+    // The actionable list behind the headline — who to hand to the F&B team.
+    const never = d.golfers_who_never_dine || [];
+    document.getElementById('crossoverNeverDine').innerHTML = never.length
+      ? never.map(m =>
+          `<span class="badge watch" title="${esc(m.rounds)} rounds, never stayed">`
+          + `${esc(m.name || m.member_id)} · ${esc(m.rounds)}</span>`).join('')
+      : '<div style="font-size:12px;color:var(--ink-soft);">Nobody is playing regularly without ever staying to eat.</div>';
   }
 
   function timeSince(dateStr){
@@ -5264,6 +5371,10 @@
     members: {
       title: 'How Members works',
       text: 'Populated by: manual entry or bulk CSV/PDF import from your POS/CRM. Each member needs a member ID, name, and a phone or email. Set their communication preference (SMS or email) and opt-out status. The "Send survey" button sends a one-off survey to that member. PDF imports should contain a table with columns: member_id, first_name, last_name, phone_number, email_address.'
+    },
+    crossover: {
+      title: 'How Golf & dining crossover works',
+      text: 'Populated by: visits, not survey responses — a member who played and then ate is a fact about the day whether or not they ever filled anything in. Everything is counted in member-days, so somebody who ordered twice after one round is one golfer who dined, not two. Guests are excluded: without a member number there is no way to know the golfer and the diner were the same person, and assuming it would invent crossover that did not happen. "Left on the table" values the golf-only days at the spend the club already achieves when a golfer does stay — an estimate, and labelled as one. Note that a member who golfs and dines on the same day now receives only ONE survey, alternating between golf and F&B each time, so this panel is the only place that full picture is visible.'
     },
     visits: {
       title: 'How Visits works',
