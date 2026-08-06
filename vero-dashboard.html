@@ -5597,7 +5597,17 @@
     // Anyone who can be assigned an alert. Shift managers are included: they
     // run a section and are usually the person on the floor when it happens.
     const ownerOpts = (staffCache || []).filter(m => m.active !== false);
-    container.innerHTML = '<div class="role-table-row outlet-row head"><span>Name</span><span>Min spend ($)</span><span>Re-survey (days)</span><span>Survey questions</span><span>Alerts go to</span><span></span></div>' +
+
+    // PostgREST omits a key entirely when the column does not exist, but
+    // returns it as null when it does and is unset — so this distinguishes
+    // "migration not run" from "nobody assigned yet". Offering a dropdown
+    // that cannot save is worse than saying why it is not there.
+    const ownerColumnExists = outlets.some(o => 'owner_staff_id' in o);
+    container.innerHTML = (ownerColumnExists ? '' :
+        '<div class="import-summary warn" style="display:block;margin:0 0 10px;">' +
+        'Alert routing is not switched on yet — run <code>migrations/outlet-alert-owner.sql</code> in the Supabase SQL editor and reload this page. ' +
+        'Everything else on this screen works normally in the meantime.</div>') +
+      '<div class="role-table-row outlet-row head"><span>Name</span><span>Min spend ($)</span><span>Re-survey (days)</span><span>Survey questions</span><span>Alerts go to</span><span></span></div>' +
       outlets.map(o => `<div class="role-table-row outlet-row">
         <input class="field" value="${o.name.replace(/"/g,'&quot;')}" onchange="updateOutlet('${o.outlet_id}',{name:this.value},this)">
         <input class="field" type="number" step="0.01" min="0" value="${parseFloat(o.min_spend_threshold||0).toFixed(2)}" onchange="updateOutlet('${o.outlet_id}',{min_spend_threshold:this.value},this)">
@@ -5606,10 +5616,10 @@
           <option value="">Default for visit type</option>
           ${tplOpts.map(t => `<option value="${t.template_id}" ${o.template_id===t.template_id?'selected':''}>${esc(t.name)}</option>`).join('')}
         </select>
-        <select class="field" onchange="updateOutlet('${o.outlet_id}',{owner_staff_id:this.value},this)" title="Case alerts raised for this outlet are assigned to this person and emailed to them">
+        ${ownerColumnExists ? `<select class="field" onchange="updateOutlet('${o.outlet_id}',{owner_staff_id:this.value},this)" title="Case alerts raised for this outlet are assigned to this person and emailed to them">
           <option value="">Nobody — notify managers</option>
           ${ownerOpts.map(m => `<option value="${jsAttr(m.staff_id)}" ${o.owner_staff_id===m.staff_id?'selected':''}>${esc(m.name)}</option>`).join('')}
-        </select>
+        </select>` : `<span style="font-size:11px;color:var(--ink-soft);" title="Run migrations/outlet-alert-owner.sql in the Supabase SQL editor, then reload">Needs a database change</span>`}
         <span class="remove-x" onclick="removeOutlet('${jsAttr(o.outlet_id)}','${jsAttr(o.name)}')" title="Remove">✕</span>
       </div>`).join('');
   }

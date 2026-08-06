@@ -62,7 +62,16 @@ create index if not exists case_alerts_assigned_idx on case_alerts (assigned_to_
   where assigned_to_staff_id is not null;
 
 -- ---------------------------------------------------------------------------
--- 3. Suggested starting point
+-- 3. Tell PostgREST about the new columns
+-- ---------------------------------------------------------------------------
+-- Supabase serves the API through PostgREST, which caches the schema. Until it
+-- reloads, saving an owner fails with "Could not find the 'owner_staff_id'
+-- column of 'outlets' in the schema cache" even though the column now exists.
+-- Supabase reloads it on its own eventually; this asks for it immediately.
+notify pgrst, 'reload schema';
+
+-- ---------------------------------------------------------------------------
+-- 4. Suggested starting point
 -- ---------------------------------------------------------------------------
 -- Nothing is assigned automatically here — who runs which outlet is a
 -- decision, not something to infer. This just lists what you have to work

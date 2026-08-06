@@ -136,7 +136,18 @@ router.put("/:id", async (req, res) => {
     .eq("outlet_id", req.params.id)
     .select()
     .single();
-  if (error) return res.status(500).json({ error: error.message });
+
+  if (error) {
+    // A column the migration adds. PostgREST reports it as "could not find
+    // the column ... in the schema cache", which tells a GM nothing they can
+    // act on — say which file to run instead of passing the raw error up.
+    if (/owner_staff_id/.test(error.message || "")) {
+      return res.status(400).json({
+        error: "Alert routing needs a database change first. Run migrations/outlet-alert-owner.sql in the Supabase SQL editor, then reload this page. Everything else on this row saves normally in the meantime.",
+      });
+    }
+    return res.status(500).json({ error: error.message });
+  }
   res.json({ updated: true, outlet: data });
 });
 
