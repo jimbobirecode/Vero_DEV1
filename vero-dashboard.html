@@ -756,6 +756,37 @@
 
     <!-- ================= MEMBERS ================= -->
     <section class="screen" id="screen-members">
+      <!-- Member health. A member who stops coming rarely resigns first —
+           they just come less, and the club finds out when the subscription
+           lapses. -->
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <h2 style="display:inline;">Member health</h2>
+            <button class="info-btn" onclick="showInfo('memberhealth')">?</button>
+          </div>
+          <select id="healthWindow" class="field" style="width:170px;padding:4px 8px;font-size:12px;" onchange="loadMemberHealth()">
+            <option value="60">Last 60 days</option>
+            <option value="90" selected>Last 90 days</option>
+            <option value="180">Last 6 months</option>
+          </select>
+        </div>
+        <div class="panel-sub" id="healthSub">Each member against their own rhythm, adjusted for how the rest of the club moved over the same weeks.</div>
+
+        <div class="recovery-strip" id="healthStrip" style="margin-top:12px;">
+          <div class="stat"><div class="eyebrow">Loading</div><div class="value">—</div></div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div class="eyebrow" style="font-size:10px;margin-bottom:8px;">Worth a call, in order</div>
+          <div class="parse-row head" style="grid-template-columns:1.6fr 1fr 1fr 1fr 1.1fr;">
+            <span>Member</span><span>Was coming</span><span>Now</span><span>Last visit</span><span>At risk</span>
+          </div>
+          <div id="healthCallList"></div>
+        </div>
+        <div id="healthNote" style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;"></div>
+      </div>
+
       <div class="panel">
         <h2>Add a member</h2>
         <div class="panel-sub">These are the fields the eligibility check and survey delivery use — same six as the CRM export.</div>
@@ -2064,7 +2095,7 @@
     if(tab==='visits') { loadOutletOptions(); loadServerOptions(); loadVisits(); }
     if(tab==='queue') loadSurveyQueue();
     if(tab==='events') loadEventList();
-    if(tab==='members') loadMembersFromApi();
+    if(tab==='members'){ loadMembersFromApi(); loadMemberHealth(); }
     if(tab==='upload'){ loadPosOutletOptions(); loadPosModules(); }
     if(tab==='training') loadTrainingPlans();
     if(tab==='alerts') loadAlerts();
@@ -2291,6 +2322,79 @@
         sel.appendChild(opt);
       });
     });
+  }
+
+  /* ---------- member health ---------- */
+  // The list a GM can act on before breakfast: who has quietly stopped
+  // coming, ranked by what they are worth rather than by how steep the drop
+  // looks. A 90% fall from a member who spent $300 a year is a worse use of
+  // the morning than a 50% fall from one who spent $9,000.
+  const HEALTH_BANDS = {
+    lapsed:   { label: 'Lapsed',   colour: 'var(--brick)' },
+    at_risk:  { label: 'At risk',  colour: 'var(--brick)' },
+    slipping: { label: 'Slipping', colour: 'var(--amber)' },
+    steady:   { label: 'Steady',   colour: 'var(--sage)' },
+    growing:  { label: 'Growing',  colour: 'var(--sage)' },
+  };
+
+  async function loadMemberHealth(){
+    const days = document.getElementById('healthWindow')?.value || '90';
+    const strip = document.getElementById('healthStrip');
+    const rows = document.getElementById('healthCallList');
+    const note = document.getElementById('healthNote');
+
+    const res = await apiCall('/analytics/member-health?recent_days=' + encodeURIComponent(days));
+    if(!res || !res.ok){
+      strip.innerHTML = '<div class="stat"><div class="eyebrow">Member health</div><div class="note">Not available.</div></div>';
+      rows.innerHTML = '';
+      return;
+    }
+    const d = await res.json();
+    const money = (v) => v == null ? '—' : '$' + Math.round(Number(v)).toLocaleString('en-US');
+
+    const stats = [
+      { eyebrow: 'Lapsed', value: String(d.summary.lapsed),
+        note: 'no visit at all this window' },
+      { eyebrow: 'At risk', value: String(d.summary.at_risk),
+        note: 'coming far less than expected' },
+      { eyebrow: 'Slipping', value: String(d.summary.slipping),
+        note: 'worth watching, not calling' },
+      { eyebrow: 'Revenue at risk', value: money(d.summary.value_at_risk),
+        note: 'annualised, lapsed and at-risk' },
+    ];
+    strip.innerHTML = stats.map(st =>
+      `<div class="stat"><div class="eyebrow">${esc(st.eyebrow)}</div>`
+      + `<div class="value">${esc(st.value)}</div><div class="note">${esc(st.note)}</div></div>`).join('');
+
+    const list = d.call_list || [];
+    rows.innerHTML = list.length ? list.map(m => {
+      const band = HEALTH_BANDS[m.band] || { label: m.band, colour: 'var(--ink-soft)' };
+      const reach = m.opt_out ? 'opted out' : (m.phone || m.email || 'no contact details');
+      return `<div class="parse-row" style="grid-template-columns:1.6fr 1fr 1fr 1fr 1.1fr;">
+        <span><b>${esc(m.name || m.member_id)}</b>
+          <span class="mono" style="font-size:10px;color:${band.colour};"> ${esc(band.label)}</span>
+          <div style="font-size:10.5px;color:var(--ink-soft);">${esc(reach)}</div></span>
+        <span>${esc(m.baseline_rate_30d)}<span style="color:var(--ink-soft);font-size:10.5px;"> /month</span></span>
+        <span>${esc(m.recent_rate_30d)}<span style="color:var(--ink-soft);font-size:10.5px;"> /month</span></span>
+        <span>${m.days_since_last_visit == null ? '—' : esc(m.days_since_last_visit) + 'd ago'}</span>
+        <span>${esc(money(m.value_at_risk))}</span>
+      </div>`;
+    }).join('')
+      : '<div style="text-align:center;color:var(--sage);padding:16px;font-size:13px;">Nobody has dropped off beyond what the season explains.</div>';
+
+    // Say what the number rests on. A club three months into using this has
+    // no baseline for most of its members, and a confident-looking zero would
+    // be a lie.
+    const bits = [];
+    if(d.club.scored_members != null)
+      bits.push(`${d.club.scored_members} member${d.club.scored_members===1?'':'s'} had enough history to score`);
+    if(d.club.unscored_members)
+      bits.push(`${d.club.unscored_members} too new or too infrequent to judge`);
+    if(d.club.seasonal_adjusted)
+      bits.push(`club-wide activity is ${d.club.seasonal_ratio < 1 ? 'down' : 'up'} ${Math.abs(Math.round((d.club.seasonal_ratio - 1) * 100))}% on the baseline, and every member is measured against that`);
+    else
+      bits.push('not enough members to measure a season, so no seasonal adjustment was applied');
+    note.textContent = bits.join(' · ') + '.';
   }
 
   /* ---------- golf & dining crossover ---------- */
@@ -5371,6 +5475,10 @@
     members: {
       title: 'How Members works',
       text: 'Populated by: manual entry or bulk CSV/PDF import from your POS/CRM. Each member needs a member ID, name, and a phone or email. Set their communication preference (SMS or email) and opt-out status. The "Send survey" button sends a one-off survey to that member. PDF imports should contain a table with columns: member_id, first_name, last_name, phone_number, email_address.'
+    },
+    memberhealth: {
+      title: 'How Member health works',
+      text: 'Populated by: visits, not survey responses — attendance is the signal, and it exists whether or not a member ever filled anything in. Each member is measured against THEIR OWN rhythm over the previous year, not against a club-wide rule: "hasn\'t visited in 30 days" flags the member who always came monthly and misses the one who came three times a week and now comes once, which is exactly backwards. The comparison is then adjusted for how the rest of the membership moved over the same weeks, using the median member rather than the club total, so a seasonal club does not flag its entire membership every winter and one heavy user who leaves cannot define the season for everybody else. Members without enough history are set aside rather than scored as healthy — the footnote says how many. The list is ranked by annualised revenue at risk, because a GM has one morning and a 90% drop from a $300 member is a worse use of it than a 50% drop from a $9,000 one.'
     },
     crossover: {
       title: 'How Golf & dining crossover works',

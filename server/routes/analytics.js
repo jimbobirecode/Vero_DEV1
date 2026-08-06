@@ -7,6 +7,7 @@ const express = require("express");
 const router = express.Router();
 const { supabase } = require("../lib/supabase");
 const crossover = require("../lib/crossover");
+const health = require("../lib/member-health");
 
 // GET /api/analytics/crossover?days=90
 //
@@ -53,6 +54,57 @@ router.get("/crossover", async (req, res) => {
     // reading them as visits would overstate anyone who ate twice.
     unit: "member-day",
     ...report,
+  });
+});
+
+// GET /api/analytics/member-health?recent_days=90&baseline_days=365
+//
+// Who is quietly on their way out. Reads visits only — a member's attendance
+// is the signal, and it exists whether or not they ever answered a survey.
+router.get("/member-health", async (req, res) => {
+  const recentDays = Math.min(Math.max(parseInt(req.query.recent_days, 10) || 90, 14), 365);
+  const baselineDays = Math.min(Math.max(parseInt(req.query.baseline_days, 10) || 365, recentDays * 2), 1095);
+  const since = new Date(Date.now() - baselineDays * 86400000).toISOString().split("T")[0];
+
+  const { data, error } = await supabase
+    .from("visits")
+    .select("member_id, visit_date, spend_amount")
+    .not("member_id", "is", null)
+    .gte("visit_date", since)
+    .limit(100000);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const result = health.memberHealth(data || [], {
+    recentDays, baselineDays,
+    minBaselineVisits: Math.max(parseInt(req.query.min_baseline_visits, 10) || 4, 1),
+  });
+
+  // Name them, and carry the contact details — the output is a call list, and
+  // a call list of member numbers is not one.
+  const shown = [...result.members.slice(0, 100)];
+  if (shown.length) {
+    const { data: members } = await supabase
+      .from("members")
+      .select("member_id, first_name, last_name, phone_number, email_address, opt_out")
+      .in("member_id", shown.map((m) => m.member_id));
+    const byId = new Map((members || []).map((m) => [m.member_id, m]));
+    for (const m of shown) {
+      const rec = byId.get(m.member_id);
+      m.name = rec ? `${rec.first_name} ${rec.last_name}` : m.member_id;
+      m.phone = rec?.phone_number || null;
+      m.email = rec?.email_address || null;
+      m.opt_out = Boolean(rec?.opt_out);
+      // A member the club has since removed should not sit on a call list.
+      m.on_member_list = Boolean(rec);
+    }
+  }
+
+  res.json({
+    ...result,
+    members: shown,
+    truncated: result.members.length > shown.length,
+    call_list: health.callList({ members: shown }, { limit: 10 }),
   });
 });
 
