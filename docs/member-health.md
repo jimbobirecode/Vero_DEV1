@@ -68,6 +68,24 @@ names is not a call list.
 Contact details and opt-out status ride along, and a member the club has since
 removed is marked `on_member_list: false` rather than sitting on the list.
 
+## Demo data
+
+`migrations/member-health-seed.sql` — a year of attendance for 39 members,
+relative to now, idempotent, and safe to run alongside the service-recovery
+seed (these members are prefixed `MH_`, that one uses `DEMO_`).
+
+It also feeds the Golf & dining crossover panel, since both read visits.
+
+The club is deliberately **busier** in the recent window than the baseline,
+which is what a golf club in August looks like against a year that includes
+winter. That makes the seasonal adjustment visibly do something — a member
+merely holding flat is slipping, because everyone else went up. Seeded flat,
+the panel demos as a plain "hasn't been in a while" list, which is the thing
+it is not.
+
+Every seeded visit is stamped as already surveyed, so it does not put eight
+hundred rows into the Survey Queue.
+
 ## Tuning
 
 `recent_days`, `baseline_days` and `min_baseline_visits` are query parameters.
