@@ -146,6 +146,7 @@ app.use("/api/servers",      requireAuth, minimumRole("dept_head"),       requir
 app.use("/api/outlets",      requireAuth, writeRequires("fb_director"),   require("./routes/outlets"));
 app.use("/api/survey-templates", requireAuth, writeRequires("fb_director"), require("./routes/survey-templates"));
 app.use("/api/insights",     requireAuth, minimumRole("fb_director"),     require("./routes/insights"));
+app.use("/api/analytics",    requireAuth, minimumRole("dept_head"),       require("./routes/analytics"));
 app.use("/api/settings",     requireAuth, writeRequires("general_manager"), require("./routes/settings"));
 app.use("/api/scores",       requireAuth, minimumRole("dept_head"),       require("./routes/scores"));
 // Candid feedback about how a shift was managed, attributable to the person

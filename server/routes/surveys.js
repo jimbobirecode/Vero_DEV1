@@ -5,7 +5,7 @@ const { supabase } = require("../lib/supabase");
 const { loadCredentials, sendSms, sendEmail } = require("../lib/senders");
 const { CLUB_NAME } = require("../lib/club-config");
 const { smsBody, emailSubject, resolveSurveyForVisit } = require("../lib/messages");
-const { applyMemberCap, parseCapSettings } = require("../lib/send-policy");
+const { applyMemberCap, parseCapSettings, modalityOf } = require("../lib/send-policy");
 const { resolveRecipient } = require("../lib/recipient");
 
 const CLUB_ID = process.env.CLUB_ID;
@@ -120,8 +120,29 @@ async function performSend(linkBase) {
     }
   }
 
-  const capResult = applyMemberCap(visits ?? [], { cap, windowDays, alreadySent });
+  // What each member was last asked about, so a day that spans golf and
+  // dining alternates instead of always resolving the same way. Derived from
+  // the visits themselves rather than stored — the last survey actually sent
+  // is the truth, and a separate counter could drift from it.
+  const lastModality = {};
+  {
+    const { data: sent } = await supabase
+      .from("visits")
+      .select("member_id, visitor_type, survey_sent_at")
+      .not("member_id", "is", null)
+      .not("survey_sent_at", "is", null)
+      .order("survey_sent_at", { ascending: false })
+      .limit(5000);
+    for (const r of sent || []) {
+      // Ordered newest first, so the first sighting of a member is their most
+      // recent survey.
+      if (!(r.member_id in lastModality)) lastModality[r.member_id] = modalityOf(r);
+    }
+  }
+
+  const capResult = applyMemberCap(visits ?? [], { cap, windowDays, alreadySent, lastModality });
   results.skipped_member_cap = capResult.deferred.length;
+  results.rotated = capResult.chosen.length;
 
   // Take the deferred visits out of the queue so they do not resurface
   // tomorrow as stale surveys about a visit the member has moved on from.
