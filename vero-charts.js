@@ -292,7 +292,21 @@
   function frame(host, height) {
     host.innerHTML = "";
     host.style.position = "relative";
+    host.style.opacity = "";
     return host;
+  }
+
+  // Hold the current render while new data is on its way.
+  //
+  // Clearing first and rebuilding on arrival makes the card collapse to nothing
+  // and snap back, which reads as a fault rather than as a refresh — and on a
+  // grid of charts it jumps the whole page. Fading what is already there keeps
+  // the frame and the layout exactly where they were.
+  function pending(host, isPending) {
+    if (!host) return;
+    host.style.transition = "opacity .15s";
+    host.style.opacity = isPending ? "0.45" : "";
+    host.setAttribute("aria-busy", isPending ? "true" : "false");
   }
 
   // ------------------------------------------------------- line and area ----
@@ -637,7 +651,7 @@
   }
 
   global.VeroCharts = {
-    line: lineChart, area: areaChart, bar: barChart, meter, empty: emptyState,
+    line: lineChart, area: areaChart, bar: barChart, meter, empty: emptyState, pending,
     PALETTE,
     // Exported for tests — the parts that decide where a pixel goes.
     _: { niceTicks, niceNum, scale, domainOf, compact, linePath, areaPath, round },

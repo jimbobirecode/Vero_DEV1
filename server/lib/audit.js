@@ -31,6 +31,10 @@ const ACTIONS = {
   SMS_TOPUP_STARTED: "sms_topup_started",
   SMS_CREDIT_ADJUSTED: "sms_credit_adjusted",
   SMS_CREDIT_SETTINGS_CHANGED: "sms_credit_settings_changed",
+  // An export leaves the building — a spreadsheet of member scores lands in
+  // someone's inbox and is out of our control from there, so who took one and
+  // for what period belongs in the same trail as who read the member list.
+  REPORT_EXPORTED: "report_exported",
 };
 
 function clientIp(req) {

@@ -527,6 +527,7 @@
       <div class="heading">Setup</div>
       <div class="nav-item" data-tab="upload">Upload</div>
       <div class="nav-item" data-tab="builder">Survey Builder</div>
+      <div class="nav-item" data-tab="reports">Reports</div>
       <div class="nav-item" data-tab="billing">SMS Credit</div>
       <div class="nav-item" data-tab="settings">Settings</div>
     </div>
@@ -740,6 +741,10 @@
         </div>
         <div class="panel-sub">Any response scoring low is flagged the same day it's received — not at month-end review.</div>
         <div id="recoveryStrip" class="recovery-strip" style="display:none;"></div>
+        <!-- Counts for the whole period, from their own endpoint. Tallying the
+             list on screen would chart the first page of 25 rather than the
+             month. -->
+        <div id="alertSeverityChart" style="margin:14px 0 6px;"></div>
         <div class="filter-tabs" id="alertFilters">
           <div class="filter-tab active" onclick="filterAlertsApi('all', this)">All</div>
           <div class="filter-tab" onclick="filterAlertsApi('recovery', this)">Awaiting call-back</div>
@@ -1227,6 +1232,60 @@
             <button class="btn-secondary" id="messageLogNext" onclick="messageLogPage(1)" style="display:none;">Next</button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============================== REPORTS ============================== -->
+    <section class="screen" id="screen-reports">
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+          <div>
+            <h2>Period report</h2>
+            <div class="panel-sub">Everything below is computed once on the server, so the download and the screen can never disagree.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="field" id="reportRange" style="width:auto;" onchange="loadReport()">
+              <option value="30">Last 30 days</option>
+              <option value="90">Last quarter</option>
+              <option value="180">Last 6 months</option>
+              <option value="365">Last 12 months</option>
+            </select>
+            <button class="btn-secondary" onclick="downloadReport('xlsx', this)">Excel</button>
+            <button class="btn-primary" onclick="downloadReport('pdf', this)">PDF</button>
+          </div>
+        </div>
+        <div id="reportPeriod" style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;"></div>
+        <div id="reportNote" style="font-size:11.5px;margin-top:6px;"></div>
+      </div>
+
+      <div class="kpi-row" id="reportHeadline" style="margin-top:16px;"></div>
+
+      <div class="panel" id="reportIndicesPanel" style="display:none;">
+        <h2>Club indices</h2>
+        <div class="panel-sub">Each index is scored 0–100 from the questions tagged to it.</div>
+        <div id="reportIndices" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportTrendPanel">
+        <h2>Month on month</h2>
+        <div class="panel-sub">Responses and NPS across the period.</div>
+        <div id="reportTrend" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportOutletPanel">
+        <h2>By outlet</h2>
+        <div id="reportOutlets" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportServerPanel">
+        <h2>Server performance</h2>
+        <div class="panel-sub">Servers with at least three responses in the period.</div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportServers"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportAlertPanel">
+        <h2>Case alerts</h2>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportAlerts"></table></div>
       </div>
     </section>
 
@@ -2207,6 +2266,7 @@
     messagelog:['Message Log','Every SMS and email sent by the system'],
     upload:['Upload','One file. Less than a minute. Fully automated from here.'],
     builder:['Survey Builder','Survey templates and question wording'],
+    reports:['Reports','Period analytics, exportable to Excel or PDF'],
     billing:['SMS Credit','Prepaid message credit — balance, top-ups, and what it was spent on'],
     settings:['Settings','Club profile, channels, and access']
   };
@@ -2239,6 +2299,7 @@
     // Leaving the screen retires the post-payment confirmation, so it does not
     // reappear later in the session as though a second payment had landed.
     if(tab !== 'billing') creditBanner = null;
+    if(tab==='reports') loadReport();
     if(tab==='billing') { loadCredit(); loadCreditHistory(); }
     if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
@@ -2255,8 +2316,8 @@
     // director clicks a screen that answers every request with 403.
     fb: { badge:"F&B Director · Food & Service Only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','members','billing'] },
     ro: { badge:"Department Head · Read-only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','insights','upload','members','billing'] },
-    sm: { badge:"Shift Manager · Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','golf','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing'] },
-    gsm: { badge:"Golf Shift Manager · Golf Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','upload','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing'] }
+    sm: { badge:"Shift Manager · Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','golf','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing','reports'] },
+    gsm: { badge:"Golf Shift Manager · Golf Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','upload','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing','reports'] }
   };
 
   document.querySelectorAll('.role-opt').forEach(btn=>{
@@ -2336,7 +2397,52 @@
     loadAlerts();
   }
 
+  // Alert volume by severity, over the period rather than over the page.
+  //
+  // Severity is a status scale, not a set of series — high/medium/low are
+  // states with a fixed meaning, so they wear the reserved status colours and
+  // never the categorical ones. Each bar carries its severity as a label, so
+  // nothing here depends on telling three colours apart.
+  async function loadAlertSeverity(){
+    const host = document.getElementById('alertSeverityChart');
+    if(!host) return;
+    const res = await apiCall('/alerts/severity-stats?days=30');
+    if(!res || !res.ok){ host.innerHTML = ''; return; }
+    const d = await res.json();
+
+    if(!d.total){
+      VeroCharts.empty(host, 'No alerts in the last 30 days.');
+      return;
+    }
+
+    const LABEL = { high:'High', medium:'Medium', low:'Low' };
+    const openBy = Object.fromEntries((d.open_by_severity||[]).map(s=>[s.severity, s.count]));
+
+    VeroCharts.bar(host, {
+      data: (d.by_severity||[]).map(s=>({
+        severity: LABEL[s.severity] || s.severity,
+        count: s.count,
+        open: openBy[s.severity] || 0
+      })),
+      index: 'severity',
+      category: 'count',
+      colors: (d.by_severity||[]).map(s=>
+        VeroCharts.PALETTE.status[s.severity === 'high' ? 'critical' : s.severity === 'medium' ? 'warning' : 'good']),
+      indexLabel: 'Severity',
+      valueLabel: 'Alerts',
+      ariaLabel: 'Alerts raised in the last 30 days, by severity',
+      valueFormatter: (v)=> v.toLocaleString()
+    });
+
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:11px;color:var(--ink-soft);margin-top:2px;';
+    note.textContent = d.total.toLocaleString() + ' raised in the last 30 days · ' +
+      d.open.toLocaleString() + ' still open';
+    host.appendChild(note);
+  }
+
   async function loadAlerts(){
+    loadAlertSeverity();
     loadRecoveryStrip();
     if(alertsFilter === 'recovery') return loadRecoveryQueue();
     let url = '/alerts?limit=25&offset=' + alertsOffset;
@@ -3134,7 +3240,15 @@
   }
 
   async function renderTrendCharts(){
-    if(!Object.keys(trendData).length) await loadTrendData();
+    // Changing the outlet refetches. Hold what is on screen at reduced opacity
+    // rather than clearing it: a grid of four cards collapsing to nothing and
+    // snapping back reads as a fault, and it jumps the whole page.
+    const gridEl = document.getElementById('chartGrid');
+    if(!Object.keys(trendData).length){
+      VeroCharts.pending(gridEl, true);
+      await loadTrendData();
+      VeroCharts.pending(gridEl, false);
+    }
     const key = document.getElementById('outletFilter').value;
     const d = trendData[key];
     const grid = document.getElementById('chartGrid');
@@ -6172,6 +6286,199 @@
   }
 
   /* ---------- club settings ---------- */
+  /* ---------- Reports ----------
+     The screen and the two downloads all come from /api/reports/summary, which
+     builds one model server-side. Nothing here recomputes a figure: a PDF whose
+     NPS disagrees with the dashboard someone was looking at an hour earlier is
+     the failure this whole arrangement exists to prevent. */
+
+  let reportModel = null;
+
+  async function loadReport(){
+    const days = document.getElementById('reportRange').value;
+    const note = document.getElementById('reportNote');
+    const headline = document.getElementById('reportHeadline');
+
+    // Hold the previous render rather than clearing — same reason as the charts.
+    VeroCharts.pending(headline, true);
+    note.innerHTML = '<span style="color:var(--ink-soft);">Building the report…</span>';
+
+    const res = await apiCall('/reports/summary?days=' + encodeURIComponent(days));
+    VeroCharts.pending(headline, false);
+
+    if(!res){ note.innerHTML = '<span style="color:var(--brick);">No backend connected.</span>'; return; }
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      note.innerHTML = `<span style="color:var(--brick);">${esc(err.error || 'Could not build the report.')}</span>`;
+      return;
+    }
+    const d = await res.json();
+    reportModel = d;
+
+    document.getElementById('reportPeriod').textContent =
+      d.period.label + ' · ' + d.period.days + ' days';
+    note.innerHTML = d.empty_sections.length
+      ? `<span style="color:var(--ink-soft);">No data this period for: ${esc(d.empty_sections.join(', '))}.</span>`
+      : '';
+
+    renderReportHeadline(d);
+    renderReportIndices(d);
+    renderReportTrend(d);
+    renderReportOutlets(d);
+    renderReportTable('reportServers', 'reportServerPanel',
+      ['#','Server','Surveys','Composite','NPS','Overall','Food','Service'],
+      d.servers.map(s=>[s.rank, s.name, s.surveys, s.composite, s.nps, s.overall, s.food, s.service]));
+    renderReportTable('reportAlerts', 'reportAlertPanel',
+      ['Severity','Raised','Resolved','Still open'],
+      d.alerts.map(a=>[a.label, a.raised, a.resolved, a.open]));
+  }
+
+  function renderReportHeadline(d){
+    const host = document.getElementById('reportHeadline');
+    host.innerHTML = '';
+    d.headline.forEach(h=>{
+      const card = document.createElement('div');
+      card.className = 'kpi';
+      const eyebrow = document.createElement('div');
+      eyebrow.className = 'eyebrow'; eyebrow.textContent = h.label;
+      const val = document.createElement('div');
+      val.className = 'value';
+      val.textContent = h.value == null ? '—' : (h.format === 'percent' ? h.value + '%' : h.value.toLocaleString());
+      const delta = document.createElement('div');
+      delta.className = 'delta';
+      if(h.delta){
+        // Direction is stated by the server, so up-is-good is decided in one
+        // place rather than re-derived per surface.
+        delta.textContent = (h.delta.direction === 'up' ? '▲ ' : h.delta.direction === 'down' ? '▼ ' : '') +
+          h.delta.label + ' vs previous period';
+        delta.style.color = h.delta.direction === 'up' ? 'var(--sage)'
+          : h.delta.direction === 'down' ? 'var(--brick)' : 'var(--ink-soft)';
+      } else {
+        delta.textContent = 'No comparison available';
+        delta.style.color = 'var(--ink-soft)';
+      }
+      card.appendChild(eyebrow); card.appendChild(val); card.appendChild(delta);
+      host.appendChild(card);
+    });
+  }
+
+  function renderReportIndices(d){
+    const panel = document.getElementById('reportIndicesPanel');
+    const host = document.getElementById('reportIndices');
+    if(!d.indices.length){ panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    host.innerHTML = '';
+    d.indices.forEach(i=>{
+      const row = document.createElement('div');
+      row.style.marginBottom = '10px';
+      host.appendChild(row);
+      VeroCharts.meter(row, {
+        label: i.label, value: i.value, max: 100,
+        status: i.value >= 80 ? 'good' : i.value >= 65 ? 'warning' : 'critical',
+        valueFormatter: (v)=> String(v)
+      });
+    });
+  }
+
+  function renderReportTrend(d){
+    const panel = document.getElementById('reportTrendPanel');
+    const host = document.getElementById('reportTrend');
+    if(d.months.length < 2){
+      panel.style.display = d.months.length ? '' : 'none';
+      if(d.months.length) VeroCharts.empty(host, 'A trend needs at least two months in the period.');
+      return;
+    }
+    panel.style.display = '';
+    VeroCharts.area(host, {
+      data: d.months.map(m=>({ month:m.month, nps:m.nps })),
+      index: 'month', categories: ['nps'],
+      colors: [VeroCharts.PALETTE.categorical[0]],
+      height: 200, indexLabel: 'Month', valueLabel: 'NPS',
+      ariaLabel: 'NPS by month across the report period',
+      valueFormatter: (v)=> Math.round(v)
+    });
+    const th = host.querySelector('.vc-table th:last-child');
+    if(th) th.textContent = 'NPS';
+  }
+
+  function renderReportOutlets(d){
+    const panel = document.getElementById('reportOutletPanel');
+    const host = document.getElementById('reportOutlets');
+    if(!d.outlets.length){ panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    // Magnitude across named categories: a horizontal bar, sequential, so the
+    // long outlet names have room to be read.
+    VeroCharts.bar(host, {
+      data: d.outlets.map(o=>({ outlet:o.outlet, responses:o.responses })),
+      index: 'outlet', category: 'responses',
+      indexLabel: 'Outlet', valueLabel: 'Responses',
+      ariaLabel: 'Survey responses by outlet',
+      valueFormatter: (v)=> v.toLocaleString()
+    });
+  }
+
+  function renderReportTable(tableId, panelId, headers, rows){
+    const panel = document.getElementById(panelId);
+    const table = document.getElementById(tableId);
+    if(!rows.length){ panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    table.innerHTML = '';
+    const hr = document.createElement('tr');
+    headers.forEach(h=>{ const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); });
+    table.appendChild(hr);
+    rows.forEach(r=>{
+      const tr = document.createElement('tr');
+      r.forEach(c=>{
+        const td = document.createElement('td');
+        td.textContent = c == null ? '—' : c;
+        tr.appendChild(td);
+      });
+      table.appendChild(tr);
+    });
+  }
+
+  // The download.
+  //
+  // Fetched rather than linked, because a plain <a href> cannot carry the
+  // Authorization header — it would arrive unauthenticated and 401 into a blank
+  // tab. Fetching lets the error surface as a message instead.
+  async function downloadReport(format, btn){
+    const days = document.getElementById('reportRange').value;
+    const note = document.getElementById('reportNote');
+    const label = btn ? btn.textContent : format;
+    if(btn){ btn.disabled = true; btn.textContent = 'Preparing…'; }
+
+    try {
+      const res = await apiCall('/reports/summary.' + format + '?days=' + encodeURIComponent(days));
+      if(!res || !res.ok){
+        const err = res ? await res.json().catch(()=>({})) : {};
+        note.innerHTML = `<span style="color:var(--brick);">${esc(err.error || 'The export failed.')}</span>`;
+        return;
+      }
+
+      // Take the filename the server chose, so the download matches what the
+      // audit log recorded.
+      const disp = res.headers.get('content-disposition') || '';
+      const match = /filename="([^"]+)"/.exec(disp);
+      const name = match ? match[1] : ('report.' + format);
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      // Revoked on the next tick — revoking immediately races the download in
+      // some browsers and produces a zero-byte file.
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+
+      note.innerHTML = `<span style="color:var(--sage);">Downloaded ${esc(name)}</span>`;
+    } catch(e){
+      note.innerHTML = `<span style="color:var(--brick);">The export failed: ${esc(String(e.message || e))}</span>`;
+    } finally {
+      if(btn){ btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
   /* ---------- SMS credit ----------
      Prepaid: the club buys credit, messages spend it, and at zero text sending
      stops until they top up. Every figure here comes from the server — the
