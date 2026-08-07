@@ -154,6 +154,11 @@ async function performStaffSend(linkBase, shiftDate) {
         .eq("staff_response_id", row.staff_response_id);
       results.sent++;
     } catch (e) {
+      if (e?.code === "insufficient_credit") {
+        results.stopped_for_credit = true;
+        results.errors.push(`Stopped: ${e.message} The rest of the shift was not surveyed.`);
+        break;
+      }
       results.errors.push(`${server.name}: ${String(e)}`);
     }
   }

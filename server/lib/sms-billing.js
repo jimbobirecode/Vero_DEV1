@@ -15,9 +15,9 @@
 //   2. Pricing   — what those segments are worth, at the rate in force.
 //
 // Nothing here touches the database or the network. senders.js calls it at send
-// time and stores the result on the message_log row; routes/billing.js calls it
-// again to roll those rows up into a statement. Keeping it pure is what makes
-// the numbers on an invoice reproducible six months later.
+// time and stores the result on the message_log row; lib/sms-credit.js turns
+// that into the amount debited from the club's prepaid balance. Keeping it
+// pure is what makes a charge reproducible six months later.
 
 // ---------------------------------------------------------------- metering --
 
@@ -153,17 +153,15 @@ function offendingCharacters(text) {
 const SETTING_KEYS = {
   RATE: "sms_rate_cents_per_segment",
   MARKUP: "sms_markup_pct",
-  INCLUDED: "sms_included_segments_per_period",
   CURRENCY: "sms_billing_currency",
 };
 
 // Deliberately no default rate.
 //
-// Inventing one would mean every message sent before anyone configured the real
-// carrier price carries a plausible-looking but fictional cost, and plausible
-// wrong numbers on an invoice are worse than obviously absent ones. Zero is
-// self-evidently unconfigured, the statement says so in as many words, and
-// repriceable rows can be corrected once the real rate is known.
+// Inventing one would mean every message priced at a plausible-looking but
+// fictional cost, and a plausible wrong number is far harder to catch than an
+// obviously missing one. Zero is self-evidently unconfigured, and the credit
+// screen says so in as many words rather than quietly deducting nothing.
 const DEFAULT_RATE_CENTS = 0;
 
 function numeric(value, fallback) {
@@ -181,17 +179,15 @@ function numeric(value, fallback) {
 function rateCard(settings = {}) {
   const rate = Math.max(0, numeric(settings[SETTING_KEYS.RATE], DEFAULT_RATE_CENTS));
   const markup = Math.max(0, numeric(settings[SETTING_KEYS.MARKUP], 0));
-  const included = Math.max(0, Math.floor(numeric(settings[SETTING_KEYS.INCLUDED], 0)));
 
   return {
     rate_cents_per_segment: rate,
     markup_pct: markup,
-    // Six decimal places of a cent. Carrier prices run to fractions of a cent
-    // and rounding here — rather than once, at the invoice total — is how you
-    // overcharge by 27% on a $0.0079 rate. See toCents() for where rounding
-    // legitimately happens.
+    // Six decimal places of a cent. Carrier prices run to fractions of a cent,
+    // and rounding each message to a whole one would deduct $0.01 for something
+    // that cost $0.0079 — a 27% overcharge on every message a club sends.
+    // Rounding happens when a balance is displayed, never when it is deducted.
     unit_price_cents: round6(rate * (1 + markup / 100)),
-    included_segments: included,
     currency: settings[SETTING_KEYS.CURRENCY] || "USD",
     configured: rate > 0,
   };
@@ -237,166 +233,18 @@ function meterAndPrice(body, settings = {}) {
   };
 }
 
-// --------------------------------------------------------------- statement --
-
-// Only a message that actually left is billable. A send that failed cost the
-// carrier nothing and must cost the club nothing — this is the single most
-// likely place for a back-charge system to quietly overbill, because failures
-// are logged in the same table as successes and look identical in a COUNT(*).
-function isBillable(row) {
-  return row?.channel === "sms" && row?.status === "sent";
-}
-
-// Roll message_log rows up into a statement.
-//
-// `rows` are message_log records; only SMS rows that were actually sent are
-// charged, but failures are counted and reported so a club can see what it is
-// *not* being billed for.
-//
-// The included-segment allowance is consumed in chronological order rather than
-// discounted off the total. Those give the same answer only while the rate never
-// changes; consuming oldest-first is what a club would expect and what survives
-// a mid-period price change.
-function statement(rows = [], settings = {}, { from = null, to = null } = {}) {
-  const card = rateCard(settings);
-
-  const sms = (rows || []).filter((r) => r?.channel === "sms");
-  const billable = sms
-    .filter(isBillable)
-    .slice()
-    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
-
-  const failed = sms.filter((r) => r?.status !== "sent");
-
-  let allowance = card.included_segments;
-  let segmentsSent = 0;
-  let segmentsFree = 0;
-  let segmentsCharged = 0;
-  let amount = 0;
-  let unpricedSegments = 0;
-  let unmetered = 0;
-
-  const byKind = new Map();
-  const byEncoding = new Map();
-
-  for (const row of billable) {
-    // A row written before metering shipped, or by a code path that bypassed
-    // it, has no segment count. Re-metering from the stored body is exact for
-    // the segment count; the price is not, because the rate then may not be the
-    // rate now. Such rows are counted separately so the statement can say so
-    // rather than silently presenting a guess as history.
-    const metered = row.segments == null ? meter(row.body) : { segments: row.segments, encoding: row.encoding || encodingFor(row.body || "") };
-    if (row.segments == null) unmetered++;
-
-    const segments = metered.segments || 0;
-    const encoding = metered.encoding || "gsm7";
-
-    // The price the row was sent at, never today's price. Falls back to the
-    // current card only for rows that never had one recorded.
-    const unit = row.unit_price_cents == null ? card.unit_price_cents : numeric(row.unit_price_cents, 0);
-
-    const free = Math.min(allowance, segments);
-    allowance -= free;
-    const charged = segments - free;
-
-    const rowAmount = round6(charged * unit);
-
-    segmentsSent += segments;
-    segmentsFree += free;
-    segmentsCharged += charged;
-    amount = round6(amount + rowAmount);
-    if (unit === 0) unpricedSegments += charged;
-
-    const kind = row.kind || "unattributed";
-    const k = byKind.get(kind) || { kind, messages: 0, segments: 0, amount_cents: 0 };
-    k.messages++;
-    k.segments += segments;
-    k.amount_cents = round6(k.amount_cents + rowAmount);
-    byKind.set(kind, k);
-
-    const e = byEncoding.get(encoding) || { encoding, messages: 0, segments: 0, amount_cents: 0 };
-    e.messages++;
-    e.segments += segments;
-    e.amount_cents = round6(e.amount_cents + rowAmount);
-    byEncoding.set(encoding, e);
-  }
-
-  const warnings = [];
-  if (!card.configured) {
-    warnings.push(
-      `No SMS rate is configured, so ${segmentsCharged} chargeable segment(s) priced at zero. ` +
-      `Set ${SETTING_KEYS.RATE} in Settings to the per-segment price from your carrier, then reprice.`
-    );
-  }
-  if (unmetered > 0) {
-    warnings.push(
-      `${unmetered} message(s) were sent before per-segment metering was recorded. Their segment counts ` +
-      `were recomputed from the message body; their price uses the current rate, not the rate in force when they were sent.`
-    );
-  }
-  const ucs2 = byEncoding.get("ucs2");
-  if (ucs2 && ucs2.segments > 0) {
-    warnings.push(
-      `${ucs2.messages} message(s) used UCS-2 encoding, which fits 70 characters per segment instead of 160. ` +
-      `They account for ${ucs2.segments} segment(s). Removing the non-GSM characters from those templates would cut it.`
-    );
-  }
-
-  return {
-    period: { from, to },
-    currency: card.currency,
-    rate: {
-      rate_cents_per_segment: card.rate_cents_per_segment,
-      markup_pct: card.markup_pct,
-      unit_price_cents: card.unit_price_cents,
-      included_segments: card.included_segments,
-      configured: card.configured,
-    },
-    totals: {
-      messages_sent: billable.length,
-      messages_failed: failed.length,
-      segments_sent: segmentsSent,
-      segments_included: segmentsFree,
-      segments_charged: segmentsCharged,
-      // Full precision, for arithmetic that continues elsewhere.
-      amount_cents_exact: amount,
-      // Rounded once, for the number that goes on the invoice.
-      amount_cents: toCents(amount),
-      amount: formatMoney(toCents(amount), card.currency),
-    },
-    by_kind: [...byKind.values()].sort((a, b) => b.amount_cents - a.amount_cents || b.segments - a.segments),
-    by_encoding: [...byEncoding.values()].sort((a, b) => b.segments - a.segments),
-    unpriced_segments: unpricedSegments,
-    warnings,
-  };
-}
-
-function formatMoney(cents, currency = "USD") {
-  const symbol = { USD: "$", GBP: "£", EUR: "€", CAD: "$", AUD: "$" }[currency] || "";
-  return `${symbol}${(cents / 100).toFixed(2)}`;
-}
-
-// A month's boundaries as ISO instants, from a "YYYY-MM" label. Used by the
-// period endpoints so a statement lines up with how clubs are actually
-// invoiced, rather than with an arbitrary rolling window.
-function monthBounds(label) {
-  const m = /^(\d{4})-(\d{2})$/.exec(String(label || "").trim());
-  if (!m) return null;
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  if (month < 1 || month > 12) return null;
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(month === 12 ? year + 1 : year, month === 12 ? 0 : month, 1));
-  return { period: `${m[1]}-${m[2]}`, from: start.toISOString(), to: end.toISOString() };
-}
+// The post-pay statement that used to live here — monthly rollups, closing a
+// period, drift against an invoiced figure — is gone. Billing is prepaid now:
+// see lib/sms-credit.js for the balance, the hard stop, and the ledger that
+// replaced it. What remains above is metering, which prepaid needs just as
+// much as post-pay did: a two-segment message must debit twice what a
+// one-segment message does, and that is decided here.
 
 module.exports = {
   // metering
   meter, encodingFor, offendingCharacters,
   // pricing
-  rateCard, priceMessage, meterAndPrice, toCents, round6, formatMoney,
-  // statement
-  statement, isBillable, monthBounds,
-  // constants, exported for tests and for the settings screen
+  rateCard, priceMessage, meterAndPrice, toCents, round6,
+  // constants, exported for tests
   SETTING_KEYS, GSM7_SINGLE, GSM7_MULTI, UCS2_SINGLE, UCS2_MULTI,
 };

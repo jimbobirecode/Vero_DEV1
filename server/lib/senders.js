@@ -1,7 +1,10 @@
+const { randomUUID } = require("crypto");
 const { supabase } = require("./supabase");
 const { readSecret } = require("./vault");
 const { CLUB_NAME } = require("./club-config");
 const { meterAndPrice } = require("./sms-billing");
+const credit = require("./sms-credit");
+const creditStore = require("./sms-credit-store");
 
 const SENDLY_API_KEY = process.env.SENDLY_API_KEY || "";
 
@@ -56,7 +59,7 @@ async function billingSettings() {
 
 // `billing` carries the meter reading for an SMS: segments, encoding, the unit
 // price in force, and the resulting charge. Null for email, which is not
-// back charged per message.
+// deducted per message.
 async function logMessage(memberId, channel, recipient, subject, body, status, errorMessage, { kind = null, billing = null } = {}) {
   const entry = {
     member_id: memberId ?? null,
@@ -80,32 +83,65 @@ async function logMessage(memberId, channel, recipient, subject, body, status, e
     entry.billable_cents = status === "sent" ? billing.billable_cents : 0;
   }
 
-  const { error } = await supabase.from("message_log").insert(entry);
+  const { data, error } = await supabase.from("message_log").insert(entry).select("log_id").single();
 
-  // The billing columns are added by migrations/sms-back-charge.sql. Until it
+  // The billing columns are added by migrations/sms-credit.sql. Until it
   // has been run the insert is rejected for unknown columns, and losing the
   // delivery record — which is what the audit trail and the "already sent"
   // checks rely on — would be a far worse failure than losing the meter
   // reading. So fall back to the pre-billing shape and say so once.
   if (error && /column .* does not exist|Could not find the '.*' column/i.test(error.message || "")) {
     console.error(
-      "[sms-billing] message_log is missing the billing columns — run migrations/sms-back-charge.sql. " +
-      "Logging the message without its meter reading; it can be recovered with POST /api/billing/sms/reprice."
+      "[sms-billing] message_log is missing the billing columns — run migrations/sms-credit.sql. " +
+      "Logging the message without its meter reading; the send itself is unaffected."
     );
-    await supabase.from("message_log").insert({
+    const { data: fallback } = await supabase.from("message_log").insert({
       member_id: memberId ?? null, channel, recipient,
-      subject: subject ?? null, body, status, error_message: errorMessage ?? null,
-    });
+      subject: subject ?? null, body,
+      // 'blocked' needs migrations/sms-credit.sql. Without it the row would be
+      // rejected a second time, so it degrades to 'failed' — the message did
+      // not go either way, and losing the record entirely is the worse outcome.
+      status: status === "blocked" ? "failed" : status,
+      error_message: errorMessage ?? null,
+    }).select("log_id").single();
+    return fallback?.log_id || null;
   } else if (error) {
     console.error("[sms-billing] could not write message_log entry:", error.message);
+    return null;
+  }
+  return data?.log_id || null;
+}
+
+// Thrown when a send is refused for want of credit.
+//
+// Its own class because callers need to tell it apart from a carrier failure:
+// a batch that hits an empty balance should stop rather than grind through
+// another 800 recipients, each producing an identical error. routes/surveys.js
+// and the other batch senders check for it.
+class InsufficientCreditError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "InsufficientCreditError";
+    this.code = "insufficient_credit";
+    Object.assign(this, details);
   }
 }
 
 // sendSms(to, body, creds, memberId, { kind })
 //
-// `kind` labels the send for the invoice breakdown — 'survey', 'reminder',
-// 'event', 'staff_survey', 'test'. Optional, and an unlabelled send still bills
-// correctly; it just rolls up as "unattributed" on the statement.
+// `kind` labels the send for the club's usage history — 'survey', 'reminder',
+// 'event_survey', 'staff_survey', 'integration_test'.
+//
+// The credit sequence is: meter, debit, send, and reverse the debit if the send
+// did not happen. Debiting *before* the carrier call is what makes the hard stop
+// real — the debit is a conditional UPDATE that fails when the balance is short,
+// so two concurrent sends cannot both spend the last cent. Checking the balance
+// first and debiting afterwards would let a nightly batch overdraw, silently.
+//
+// The cost of that ordering is a debit for a message that then fails to send,
+// which is why the reversal exists. It is recorded as its own ledger entry
+// rather than by deleting the debit: a club querying its balance is owed the
+// sequence of events, not a tidied version.
 async function sendSms(to, body, creds, memberId, { kind = null } = {}) {
   const payload = {
     to,
@@ -114,9 +150,54 @@ async function sendSms(to, body, creds, memberId, { kind = null } = {}) {
   };
   if (creds.sendlyFrom) payload.from = creds.sendlyFrom;
 
+  const settings = await billingSettings();
+
   // Metered before the send rather than after, so a message that throws
   // mid-flight is still recorded with the segment count it would have cost.
-  const billing = meterAndPrice(body, await billingSettings());
+  const billing = meterAndPrice(body, settings);
+  const cost = billing.billable_cents;
+
+  const enforced = credit.creditEnforced(settings) && cost > 0;
+  const sendId = randomUUID();
+  let debited = false;
+
+  if (enforced) {
+    const account = await creditStore.getAccount();
+    const gate = credit.canSend({ cost_cents: cost, account, settings });
+
+    if (!gate.allowed) {
+      await logMessage(memberId, "sms", to, null, body, "blocked", gate.message, { kind, billing });
+      // Fire the warning and any automatic top-up before throwing, so the club
+      // is told and possibly recovered rather than simply stopped.
+      await afterBalanceChange(account, settings, 0);
+      throw new InsufficientCreditError(gate.message, { balance_cents: gate.balance_cents, needed_cents: cost });
+    }
+
+    const result = await creditStore.debit({
+      amountCents: cost, kind, idempotencyKey: sendId,
+    });
+
+    // The gate above passed and the debit still failed: another send took the
+    // remaining credit in between. The atomic debit is the authority, not the
+    // check — this branch is the race actually happening, not a theoretical one.
+    if (!result.ok) {
+      const message = credit.canSend({
+        cost_cents: cost,
+        account: { balance_cents: result.balance_after ?? 0, currency: settings.sms_billing_currency || "USD" },
+        settings,
+      }).message || "Not enough SMS credit to send this message.";
+      await logMessage(memberId, "sms", to, null, body, "blocked", message, { kind, billing });
+      await afterBalanceChange(null, settings, result.balance_after ?? 0);
+      throw new InsufficientCreditError(message, { balance_cents: result.balance_after, needed_cents: cost });
+    }
+
+    debited = true;
+
+    // Warn and auto top-up on the way down, using the balance the debit just
+    // returned rather than reading the account again — a 900-message batch
+    // should not be 900 extra queries.
+    await afterBalanceChange(null, settings, result.balance_after);
+  }
 
   try {
     const res = await fetch("https://sendly.live/api/v1/messages", {
@@ -129,16 +210,122 @@ async function sendSms(to, body, creds, memberId, { kind = null } = {}) {
     });
     if (!res.ok) {
       const errText = await res.text();
-      await logMessage(memberId, "sms", to, null, body, "failed", errText, { kind, billing });
+      const logId = await logMessage(memberId, "sms", to, null, body, "failed", errText, { kind, billing });
+      if (debited) await creditStore.reverseDebit({ amountCents: cost, messageLogId: logId, idempotencyKey: sendId });
       throw new Error(`Sendly error: ${errText}`);
     }
     await logMessage(memberId, "sms", to, null, body, "sent", null, { kind, billing });
   } catch (e) {
     if (!e.message.startsWith("Sendly error:")) {
-      await logMessage(memberId, "sms", to, null, body, "failed", e.message, { kind, billing });
+      const logId = await logMessage(memberId, "sms", to, null, body, "failed", e.message, { kind, billing });
+      if (debited) await creditStore.reverseDebit({ amountCents: cost, messageLogId: logId, idempotencyKey: sendId });
     }
     throw e;
   }
+}
+
+// Called after every debit, with the balance the debit returned.
+//
+// Cheap in the common case: a healthy balance does no work at all, which is
+// what keeps a nightly batch from adding a query per message. Only once the
+// balance is near a threshold does it re-read the account and act.
+async function afterBalanceChange(knownAccount, settings, balanceAfter) {
+  try {
+    const account = knownAccount || await creditStore.getAccount();
+    if (!account) return;
+
+    const current = { ...account, balance_cents: knownAccount ? account.balance_cents : balanceAfter };
+
+    const topup = credit.shouldAutoTopup(current);
+    if (topup.topup) {
+      // Deliberately not awaited on the send path's critical timing, but the
+      // promise is handled — an unhandled rejection here would be a silent
+      // failure of the one mechanism that keeps a club sending.
+      runAutoTopup(current, topup.amount_cents).catch((e) =>
+        console.error("[sms-credit] automatic top-up failed:", String(e))
+      );
+      return;
+    }
+
+    if (credit.shouldWarn(current)) {
+      await creditStore.markWarned();
+      notifyLowBalance(current, settings).catch((e) =>
+        console.error("[sms-credit] could not send the low-balance warning:", String(e))
+      );
+    }
+  } catch (e) {
+    // Never let a warning or a top-up break a send.
+    console.error("[sms-credit] post-debit handling failed:", String(e));
+  }
+}
+
+async function runAutoTopup(account, amountCents) {
+  const stripeLib = require("./stripe");
+  if (!stripeLib.isConfigured()) return;
+
+  // One charge at a time. The lock is a compare-and-set in the database, so two
+  // processes racing here produce one charge, not two.
+  if (!(await creditStore.claimTopupLock())) return;
+
+  try {
+    // Keyed on the account and the balance band rather than on the moment, so a
+    // retry after a timeout joins the original charge instead of making a
+    // second one.
+    const key = `autotopup:${account.club_id || "default"}:${Math.floor(Date.now() / 60000)}`;
+    await stripeLib.chargeSavedCard({
+      customerId: account.stripe_customer_id,
+      paymentMethodId: account.stripe_payment_method_id,
+      amountCents,
+      currency: account.currency || "USD",
+      clubId: account.club_id,
+      idempotencyKey: key,
+    });
+    // Credit is granted by the webhook, from Stripe's own account of what
+    // happened — never here. A charge that succeeds and a webhook that never
+    // arrives is a reconciliation problem; granting credit locally on an
+    // optimistic read is a free-money problem.
+    console.log(`[sms-credit] automatic top-up of ${amountCents} cents requested`);
+  } catch (e) {
+    const message = String(e?.message || e);
+    console.error("[sms-credit] automatic top-up declined:", message);
+    await creditStore.releaseTopupLock(undefined, message);
+    notifyTopupFailed(account, message).catch(() => {});
+    return;
+  }
+  // Left held until the webhook settles it, so a slow confirmation does not
+  // trigger a second charge. The lock expires on its own if nothing arrives.
+}
+
+async function notifyLowBalance(account, settings) {
+  const { notifyManagers, dashboardUrl } = require("./notify");
+  const state = credit.balanceState(account);
+  const balance = credit.formatMoney(account.balance_cents, account.currency);
+  const remaining = credit.messagesRemaining(account.balance_cents, settings);
+
+  const subject = state === "empty"
+    ? `${CLUB_NAME}: SMS credit has run out — surveys are not sending`
+    : `${CLUB_NAME}: SMS credit is running low (${balance})`;
+
+  const body = state === "empty"
+    ? `SMS credit is exhausted, so surveys and alerts are no longer being sent by text.\n\n` +
+      `Top up to resume: ${dashboardUrl()}\n\n` +
+      `Nothing has been lost — members who could not be reached will be picked up by the next send once credit is available.`
+    : `SMS credit is down to ${balance}` +
+      (remaining ? `, roughly ${remaining.toLocaleString()} more messages.` : ".") +
+      `\n\nTop up here: ${dashboardUrl()}\n\n` +
+      `When it reaches zero, text sending stops until it is topped up.`;
+
+  await notifyManagers(subject, body);
+}
+
+async function notifyTopupFailed(account, reason) {
+  const { notifyManagers, dashboardUrl } = require("./notify");
+  await notifyManagers(
+    `${CLUB_NAME}: automatic SMS top-up was declined`,
+    `An automatic top-up of ${credit.formatMoney(account.auto_topup_amount_cents, account.currency)} could not be taken from the card on file.\n\n` +
+    `Reason given by the card issuer: ${reason}\n\n` +
+    `SMS sending will stop when the balance reaches zero. Update the card or top up manually: ${dashboardUrl()}`
+  );
 }
 
 const SENDGRID_TEMPLATE_ID = process.env.SENDGRID_TEMPLATE_ID || "";
@@ -271,4 +458,7 @@ async function sendEmail(to, subject, body, creds, memberId, templateData, { kin
   }
 }
 
-module.exports = { loadCredentials, sendSms, sendEmail, trackingSettings, unsubscribeHeaders };
+module.exports = {
+  loadCredentials, sendSms, sendEmail, trackingSettings, unsubscribeHeaders,
+  InsufficientCreditError,
+};
