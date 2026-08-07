@@ -83,25 +83,12 @@ services:
           name: vero
           envVarKey: CRON_SECRET
 
-  # Weekly: Friday morning AI analysis, matching the brief's "generated Friday
-  # 6:02am" reference point.
-  - type: cron
-    name: vero-analyze-weekly
-    runtime: node
-    plan: starter
-    schedule: "0 11 * * 5"   # Fridays, 11:00 UTC
-    buildCommand: npm install
-    startCommand: >
-      curl -X POST "$SURVEY_BASE_URL/api/cron/analyze-weekly"
-      -H "x-cron-secret: $CRON_SECRET"
-    envVars:
-      - key: SURVEY_BASE_URL
-        sync: false
-      - key: CRON_SECRET
-        fromService:
-          type: web
-          name: vero
-          envVarKey: CRON_SECRET
+  # The weekly AI analysis used to live here as a Render cron. It now runs
+  # inside the web service itself (see server/lib/scheduler.js), on the day and
+  # time set in Settings -> Survey delivery, read in the club's own timezone.
+  # That keeps the schedule somewhere the club can change it, rather than in a
+  # file only a deploy can edit. /api/cron/analyze-weekly still exists as a
+  # manual fallback.
 
   # Hourly: nudge on alerts where nobody has called the member back yet.
   #

@@ -118,4 +118,27 @@ router.post("/generate", async (req, res) => {
   res.json({ analyzed: results.length, insights: results });
 });
 
+// POST /api/insights/run-weekly — the full weekly analysis, on demand.
+//
+// Distinct from /generate above, which only writes ai_insights. This is the
+// same function the scheduler calls, so it also produces the training plans
+// the Training Actions screen reads — pointing "Run now" at /generate would
+// have quietly left that screen empty.
+//
+// Authenticated, unlike the cron endpoint, so a GM can trigger it from
+// Settings without holding the cron secret.
+router.post("/run-weekly", async (req, res) => {
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(503).json({
+      error: "The AI service is not configured on the server, so the analysis cannot run.",
+    });
+  }
+  try {
+    const { performWeeklyAnalysis } = require("./analyze");
+    res.json(await performWeeklyAnalysis());
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 module.exports = router;

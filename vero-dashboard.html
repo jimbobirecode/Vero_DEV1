@@ -1852,6 +1852,43 @@
         </div>
 
         <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px;">
+          <h3 style="font-size:13px;margin:0 0 4px;">Weekly analysis</h3>
+          <div class="panel-sub" style="margin-bottom:10px;">When Training Actions and AI Insights are written. Reads the week's scores and comments for each outlet and produces one training plan per outlet. An outlet with no responses that week gets no plan rather than an empty one.</div>
+          <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
+            <div class="form-group" style="margin:0;">
+              <label>Every</label>
+              <select class="field" id="analysisDay" style="width:140px;">
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5" selected>Friday</option>
+                <option value="6">Saturday</option>
+                <option value="0">Sunday</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label>At</label>
+              <select class="field" id="analysisTime" style="width:130px;">
+                <option value="05:00">5:00 AM</option>
+                <option value="06:00">6:00 AM</option>
+                <option value="07:00" selected>7:00 AM</option>
+                <option value="08:00">8:00 AM</option>
+                <option value="09:00">9:00 AM</option>
+                <option value="10:00">10:00 AM</option>
+                <option value="12:00">12:00 PM</option>
+                <option value="16:00">4:00 PM</option>
+              </select>
+            </div>
+            <span style="font-size:12px;color:var(--ink-soft);">Eastern Time</span>
+            <button class="btn-primary" onclick="saveAnalysisSchedule()">Save</button>
+            <button class="btn-secondary" onclick="runAnalysisNow()">Run now</button>
+            <span id="analysisNote" style="font-size:12px;"></span>
+          </div>
+          <div id="analysisLastRun" style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;"></div>
+        </div>
+
+        <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px;">
           <h3 style="font-size:13px;margin:0 0 4px;">How often one member can be surveyed</h3>
           <div class="panel-sub" style="margin-bottom:10px;">Several cheques at the same outlet on the same day already count as one visit. This caps a member who used <em>different</em> outlets — the highest-spend visit is the one surveyed, and the rest are dropped rather than saved for later.</div>
           <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
@@ -6917,6 +6954,20 @@
       const sel = document.getElementById('surveySendTime');
       if(sel) sel.value = settings.survey_send_time;
     }
+
+    const dayEl = document.getElementById('analysisDay');
+    const timeEl = document.getElementById('analysisTime');
+    // Defaults match the scheduler's own, so a database with nothing saved
+    // shows the schedule that is actually in force rather than a blank.
+    if(dayEl) dayEl.value = settings.analysis_day ?? '5';
+    if(timeEl) timeEl.value = settings.analysis_time ?? '07:00';
+
+    const lastEl = document.getElementById('analysisLastRun');
+    if(lastEl){
+      lastEl.textContent = settings.analysis_last_run_at
+        ? 'Last run ' + new Date(settings.analysis_last_run_at).toLocaleString()
+        : 'Has not run yet.';
+    }
     const capSel = document.getElementById('memberSurveyCap');
     const daySel = document.getElementById('memberSurveyCapDays');
     if(capSel) capSel.value = settings.member_survey_cap ?? '1';
@@ -7176,6 +7227,51 @@
 
     if(target === 'staff'){ loadStaff(); loadUserAccounts(); }
     loadServerList();
+  }
+
+
+  /* ---------- weekly analysis schedule ---------- */
+  async function saveAnalysisSchedule(){
+    const day = document.getElementById('analysisDay').value;
+    const time = document.getElementById('analysisTime').value;
+    const note = document.getElementById('analysisNote');
+    note.innerHTML = '<span style="color:var(--ink-soft);">Saving…</span>';
+
+    const a = await apiCall('/settings/analysis_day', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ value: day })
+    });
+    const b = await apiCall('/settings/analysis_time', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ value: time })
+    });
+
+    if(a && a.ok && b && b.ok){
+      const dayLabel = document.getElementById('analysisDay').selectedOptions[0].text;
+      const timeLabel = document.getElementById('analysisTime').selectedOptions[0].text;
+      note.innerHTML = '<span style="color:var(--sage);">Saved — the analysis runs every ' +
+        esc(dayLabel) + ' at ' + esc(timeLabel) + ' Eastern.</span>';
+    } else {
+      note.innerHTML = '<span style="color:var(--brick);">Could not save.</span>';
+    }
+  }
+
+  async function runAnalysisNow(){
+    if(!confirm('Run the weekly analysis now?\n\nIt reads this week\'s responses for every outlet and writes a training plan for each. This does not change the schedule.')) return;
+    const note = document.getElementById('analysisNote');
+    note.innerHTML = '<span style="color:var(--ink-soft);">Running… this takes a moment per outlet.</span>';
+
+    const res = await apiCall('/insights/run-weekly', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})
+    });
+    if(!res){ note.innerHTML = connectionNote(); return; }
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      note.innerHTML = '<span style="color:var(--brick);">' + esc(data.error || 'Could not run the analysis.') + '</span>';
+      return;
+    }
+    const n = data.analyzed ?? 0;
+    note.innerHTML = n
+      ? '<span style="color:var(--sage);">Done — ' + n + ' outlet' + (n===1?'':'s') + ' analysed. See Training Actions and AI Insights.</span>'
+      : '<span style="color:var(--ink-soft);">Nothing to analyse — no outlet has responses this week yet.</span>';
   }
 
   /* ---------- user accounts ---------- */

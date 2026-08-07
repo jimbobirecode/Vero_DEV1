@@ -40,8 +40,10 @@ function mondayOfCurrentWeek() {
   return new Date(d.setDate(diff)).toISOString().split("T")[0];
 }
 
-// POST /api/cron/analyze-weekly
-router.post("/analyze-weekly", async (req, res) => {
+// Does the analysis. Called by the in-app scheduler (see lib/scheduler.js)
+// and by the endpoint below. Applies no time gating of its own — the caller
+// decides when it is time, the same split performSend uses for surveys.
+async function performWeeklyAnalysis() {
   const weekStart = mondayOfCurrentWeek();
   const { data: outlets } = await supabase.from("outlets").select("*").eq("active", true);
   const created = [];
@@ -112,7 +114,18 @@ router.post("/analyze-weekly", async (req, res) => {
     created.push({ outlet: outlet.name, urgency: parsed.urgency, plan_id: plan?.plan_id });
   }
 
-  res.json({ analyzed: created.length, results: created });
+  return { analyzed: created.length, results: created, week_start: weekStart };
+}
+
+// POST /api/cron/analyze-weekly — manual trigger and fallback. Scheduling
+// lives in the app now, driven by the day and time set in Settings.
+router.post("/analyze-weekly", async (req, res) => {
+  try {
+    res.json(await performWeeklyAnalysis());
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 module.exports = router;
+module.exports.performWeeklyAnalysis = performWeeklyAnalysis;

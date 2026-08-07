@@ -32,13 +32,18 @@ function clubNow(date = new Date()) {
     new Intl.DateTimeFormat("en-CA", {
       timeZone: CLUB_TZ, hour12: false,
       year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit",
+      hour: "2-digit", minute: "2-digit", weekday: "short",
     }).formatToParts(date).map((p) => [p.type, p.value])
   );
+  // 0 = Sunday, matching Date#getDay, but read from the club's timezone
+  // rather than the server's — a Friday run must not fire on Thursday
+  // evening because Render happens to be on UTC.
+  const DAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   return {
     date: `${parts.year}-${parts.month}-${parts.day}`,
     hour: parseInt(parts.hour, 10) % 24,
     minute: parseInt(parts.minute, 10),
+    weekday: DAYS[parts.weekday] ?? null,
   };
 }
 
@@ -134,6 +139,74 @@ async function tickStaffSurveys(now, settings) {
   console.log("[scheduler] staff survey send finished:", JSON.stringify(result));
 }
 
+
+// --- Weekly analysis -------------------------------------------------------
+// Training plans and AI insights, one run per week. This used to be a Render
+// cron calling the API over HTTP, which meant the schedule lived somewhere a
+// GM could not see or change, and a missing CRON_SECRET on that separate
+// service failed silently — Friday simply passed with no plans and nothing
+// anywhere saying why.
+//
+// Same shape as the daily send: pure decision here, claim-then-run below.
+const DEFAULT_ANALYSIS_DAY = 5;        // Friday
+const DEFAULT_ANALYSIS_TIME = "07:00"; // club-local
+
+function shouldRunWeekly({ now, day, runTime, lastRunDate }) {
+  const wantDay = Number.isInteger(parseInt(day, 10)) ? parseInt(day, 10) : DEFAULT_ANALYSIS_DAY;
+  if (wantDay < 0 || wantDay > 6) {
+    return { run: false, reason: `analysis day "${day}" is not a weekday` };
+  }
+  if (now.weekday !== wantDay) {
+    return { run: false, reason: `not the configured day` };
+  }
+  if (lastRunDate === now.date) {
+    return { run: false, reason: "already run today" };
+  }
+
+  const effective = String(runTime || DEFAULT_ANALYSIS_TIME);
+  const [h, m] = effective.split(":").map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) {
+    return { run: false, reason: `analysis time "${runTime}" is not valid` };
+  }
+  if (now.hour * 60 + now.minute < h * 60 + m) {
+    return { run: false, reason: `waiting for ${effective}` };
+  }
+  // "At or past" rather than "exactly at", so a restart or a slow tick over
+  // the hour delays the run rather than skipping the week.
+  return { run: true, reason: `at or past ${effective} and not yet run today` };
+}
+
+async function tickWeeklyAnalysis(now, settings) {
+  const decision = shouldRunWeekly({
+    now,
+    day: settings.analysis_day,
+    runTime: settings.analysis_time,
+    lastRunDate: settings.analysis_last_run_date,
+  });
+  if (!decision.run) return;
+
+  // Claim the day before running. The analysis costs a model call per outlet,
+  // so a crash midway must not start it again from the top on the next tick.
+  await writeSetting("analysis_last_run_date", now.date);
+
+  const { performWeeklyAnalysis } = require("../routes/analyze");
+  console.log(`[scheduler] running weekly analysis — ${decision.reason}`);
+  try {
+    const result = await performWeeklyAnalysis();
+    console.log("[scheduler] weekly analysis finished:", JSON.stringify(result));
+    await writeSetting("analysis_last_run_at", new Date().toISOString());
+  } catch (e) {
+    // Give the day back. The claim above exists to stop a half-finished run
+    // starting over, but if the run never got going — the database was
+    // unreachable, the model call was refused — holding the claim would cost
+    // the club the whole week in silence. Releasing it lets the next tick try
+    // again, and the day still ends with at most one completed analysis.
+    console.error("[scheduler] weekly analysis failed, releasing the day:", e.message);
+    await writeSetting("analysis_last_run_date", settings.analysis_last_run_date ?? "");
+    throw e;
+  }
+}
+
 async function tick() {
   if (running) return;                 // never overlap a long send
   running = true;
@@ -147,6 +220,14 @@ async function tick() {
       await tickStaffSurveys(now, settings);
     } catch (e) {
       console.error("[scheduler] staff survey tick failed:", String(e));
+    }
+
+    // Likewise the weekly analysis — it makes a model call per outlet and is
+    // the slowest thing here, so it must not be able to hold up a send.
+    try {
+      await tickWeeklyAnalysis(now, settings);
+    } catch (e) {
+      console.error("[scheduler] weekly analysis tick failed:", String(e));
     }
 
     const decision = shouldSend({
@@ -194,4 +275,8 @@ function stopSurveyScheduler() {
   timer = null;
 }
 
-module.exports = { startSurveyScheduler, stopSurveyScheduler, shouldSend, shouldSendStaffSurvey, clubNow, tick };
+module.exports = {
+  startSurveyScheduler, stopSurveyScheduler, tick, clubNow,
+  shouldSend, shouldSendStaffSurvey, shouldRunWeekly,
+  DEFAULT_ANALYSIS_DAY, DEFAULT_ANALYSIS_TIME,
+};
