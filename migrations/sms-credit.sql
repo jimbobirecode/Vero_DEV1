@@ -255,23 +255,36 @@ alter table message_log add  constraint message_log_status_check
 
 -- 7. Settings.
 --
--- Two switches, and both start off.
+-- sms_rate_cents_per_segment is what a message costs the club, in CENTS per
+-- segment. The confirmed price is $0.02 per segment, so the value is 2 — not
+-- 0.02, which would be two hundredths of a cent and undercharge by 100x. The
+-- unit is the one thing to get right here: a one-segment message deducts
+-- 2 cents, and 1,000 of them cost the club $20.00.
 --
--- sms_rate_cents_per_segment is what a message costs the club, in cents per
--- segment. There is deliberately no default: an invented price produces a
--- balance that drains at a fictional rate, and a plausible wrong number is far
--- harder to notice than an obviously missing one. At zero, nothing is deducted
--- and the credit screen says so in as many words.
+-- No margin is applied, so sms_markup_pct stays at 0 and the club pays the
+-- rate above exactly. Markup remains a separate setting rather than being
+-- folded into the rate, so the pass-through cost is never lost if one is added
+-- later.
 --
--- sms_credit_enabled is the hard stop. Enforcement is opt-in because a
--- deployment upgrading to this migration must not suddenly stop sending surveys
--- because nobody has bought credit yet. Turn it on once a rate is set and the
--- first top-up has landed.
+-- The code itself still defaults to 0 when the setting is absent — see
+-- rateCard() in lib/sms-billing.js. That is deliberate: a missing setting must
+-- read as obviously unconfigured rather than silently falling back to a price
+-- nobody chose. The value below is a real, confirmed figure, not a guess.
 --
--- Neither is exposed on the club's screen — this is Vero's pricing, not a
--- setting the club adjusts. Set them with PUT /api/settings/:key.
+-- sms_credit_enabled is the hard stop, and starts off. Enforcement is opt-in
+-- because a deployment upgrading to this migration must not suddenly stop
+-- sending surveys before anyone has bought credit. Turn it on once the first
+-- top-up has landed.
+--
+-- None of these appear on the club's screen — this is Vero's pricing, not a
+-- setting the club adjusts. Change them with PUT /api/settings/:key.
+--
+-- Note the ON CONFLICT: re-running this migration will NOT overwrite a value
+-- that already exists. To change the price on a database where these rows are
+-- already present, update it explicitly:
+--   update club_settings set value = '2' where key = 'sms_rate_cents_per_segment';
 insert into club_settings (key, value) values
-  ('sms_rate_cents_per_segment', '0'),
+  ('sms_rate_cents_per_segment', '2'),
   ('sms_markup_pct', '0'),
   ('sms_billing_currency', 'USD'),
   ('sms_credit_enabled', 'false')
