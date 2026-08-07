@@ -51,19 +51,71 @@ async function getAccount(clubId = CLUB_ID) {
 // Creates the account if it does not exist. Used by the settings screen and by
 // the first top-up, never by the send path — a send must not quietly bring a
 // credit account into being.
+//
+// Returns { account, reason, detail }. It used to return null for every kind of
+// failure, and the route turned any null into "the credit tables are not set
+// up" — so a NOT NULL violation on club_id reported as a missing migration and
+// sent people to re-run SQL that had worked. A setup error has to say which
+// setup error it is, or it is worse than no message at all.
 async function ensureAccount(clubId = CLUB_ID) {
   const existing = await getAccount(clubId);
-  if (existing) return existing;
+  if (existing) return { account: existing, reason: "ok" };
 
   const { error } = await supabase
     .from("sms_credit_accounts")
     .insert({ club_id: clubId, balance_cents: 0 });
+
   if (error && !/duplicate key/i.test(error.message || "")) {
-    if (missingSchema(error)) { warnMissingOnce(); return null; }
+    if (missingSchema(error)) {
+      warnMissingOnce();
+      return { account: null, reason: "no_tables", detail: error.message };
+    }
     console.error("[sms-credit] could not create the account:", error.message);
-    return null;
+    return { account: null, reason: "insert_failed", detail: error.message };
   }
-  return getAccount(clubId);
+
+  const account = await getAccount(clubId);
+  if (!account) {
+    // The insert reported success but the row cannot be read back. In practice
+    // this is PostgREST serving a stale schema cache after a fresh migration.
+    return { account: null, reason: "not_readable", detail: "The account was created but could not be read back." };
+  }
+  return { account, reason: "ok" };
+}
+
+// Why is there no account?
+//
+// Read-only, and it creates nothing — GET /api/credit must not bring an account
+// into being as a side effect of someone opening a screen. It distinguishes the
+// three states that all previously showed the same "tables are not set up"
+// message, only one of which was ever that.
+async function diagnose(clubId = CLUB_ID) {
+  // Does the table answer at all?
+  const { error: tableErr } = await supabase
+    .from("sms_credit_accounts")
+    .select("account_id", { head: true, count: "exact" });
+
+  if (tableErr) {
+    return missingSchema(tableErr)
+      ? { reason: "no_tables", detail: tableErr.message }
+      : { reason: "unreadable", detail: tableErr.message };
+  }
+
+  // The table is fine, so are the functions? A migration that half-applied
+  // leaves tables without the two functions that move money, and the failure
+  // would otherwise not surface until the first send tried to debit.
+  const { error: rpcErr } = await supabase.rpc("debit_sms_credit", {
+    p_club_id: clubId,
+    p_amount_cents: 0,          // zero: proves the function exists, changes nothing
+    p_message_log_id: null,
+    p_kind: null,
+    p_idempotency_key: "probe:" + (clubId || "default"),
+  });
+  if (rpcErr && /does not exist|Could not find/i.test(rpcErr.message || "")) {
+    return { reason: "no_functions", detail: rpcErr.message };
+  }
+
+  return { reason: "no_account_yet" };
 }
 
 // Debit for one message. Atomic — see the function's comment in the migration.
@@ -228,7 +280,7 @@ async function markWarned(clubId = CLUB_ID) {
 }
 
 module.exports = {
-  getAccount, ensureAccount, debit, creditAccount, reverseDebit,
+  getAccount, ensureAccount, diagnose, debit, creditAccount, reverseDebit,
   ledger, updateAccount, claimTopupLock, releaseTopupLock, markWarned,
   CLUB_ID,
 };

@@ -50,8 +50,18 @@ create index if not exists message_log_club_idx
 -- functions below. Nothing else may write it — an UPDATE from application code
 -- that reads a balance and then writes it back is a lost update waiting for two
 -- concurrent sends, and this is money.
+-- club_id is nullable, and the primary key is a surrogate.
+--
+-- The first cut made club_id the primary key, which is implicitly NOT NULL —
+-- and a single-club deployment that never sets the CLUB_ID env var passes null.
+-- The account row could then never be created, and because the insert failed
+-- the screen reported "the credit tables are not set up", sending everyone off
+-- to re-run a migration that had worked perfectly. Everything else in the app
+-- (message_log.club_id, the ledger) already tolerates a null club, so the
+-- schema now does too.
 create table if not exists sms_credit_accounts (
-  club_id                    uuid primary key,
+  account_id                 uuid primary key default uuid_generate_v4(),
+  club_id                    uuid,
   balance_cents              numeric(14,4) not null default 0,
   currency                   text not null default 'USD',
 
@@ -79,6 +89,30 @@ create table if not exists sms_credit_accounts (
   created_at                 timestamptz not null default now(),
   updated_at                 timestamptz not null default now()
 );
+
+-- Repair a table created by the first cut of this migration, where club_id was
+-- the primary key and therefore NOT NULL. `create table if not exists` above
+-- leaves such a table untouched, so re-running the file would otherwise fix
+-- nothing. Each step is guarded, so this is a no-op on a table already correct.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+     where table_name = 'sms_credit_accounts' and column_name = 'account_id'
+  ) then
+    alter table sms_credit_accounts add column account_id uuid not null default uuid_generate_v4();
+    alter table sms_credit_accounts drop constraint if exists sms_credit_accounts_pkey;
+    alter table sms_credit_accounts add primary key (account_id);
+    alter table sms_credit_accounts alter column club_id drop not null;
+  end if;
+end $$;
+
+-- One account per club, with a null club treated as its own key rather than as
+-- "distinct from everything" — which is what a plain unique constraint would do
+-- and which would let a single-club deployment accumulate a new account row on
+-- every top-up.
+create unique index if not exists sms_credit_accounts_club_idx
+  on sms_credit_accounts (coalesce(club_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
 -- A balance must never go negative. The debit function already refuses, but a
 -- constraint is what makes that true regardless of how the row is reached —
@@ -213,9 +247,11 @@ begin
 
   -- Creates the account on first credit, so a club that has never been set up
   -- gets one the moment it pays rather than erroring at the till.
+  -- Untargeted ON CONFLICT: the uniqueness is enforced by an expression index
+  -- on coalesce(club_id, …), which cannot be named as a conflict target.
   insert into sms_credit_accounts (club_id, balance_cents)
   values (p_club_id, 0)
-  on conflict (club_id) do nothing;
+  on conflict do nothing;
 
   update sms_credit_accounts
      set balance_cents = balance_cents + p_amount_cents,

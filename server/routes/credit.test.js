@@ -14,6 +14,7 @@ process.env.STRIPE_WEBHOOK_SECRET = "whsec_stub";
 process.env.SURVEY_BASE_URL = "https://vero.test";
 
 let ACCOUNT = null, LEDGER = [], SETTINGS = [], RPC = [];
+let TABLE_ERROR = null, RPC_ERROR = null, INSERT_ERROR = null;
 
 const Module = require("module");
 const rr = Module._resolveFilename;
@@ -33,9 +34,11 @@ function from(table) {
     select: () => api, eq: () => api, is: () => api, or: () => api, like: () => api,
     order: () => api, limit: () => api, range: () => api, lt: () => api,
     single: () => { single = true; return api; },
-    insert(row) { if (table === "sms_credit_accounts") ACCOUNT = { ...(ACCOUNT || {}), ...row }; return api; },
+    insert(row) { if (!INSERT_ERROR && table === "sms_credit_accounts") ACCOUNT = { ...(ACCOUNT || {}), ...row }; return api; },
     update(row) { if (table === "sms_credit_accounts") ACCOUNT = { ...(ACCOUNT || {}), ...row }; return api; },
     then(resolve) {
+      if (TABLE_ERROR && table === "sms_credit_accounts") return resolve({ data: null, error: TABLE_ERROR });
+      if (INSERT_ERROR && table === "sms_credit_accounts") return resolve({ data: null, error: INSERT_ERROR });
       let data;
       if (table === "sms_credit_accounts") data = ACCOUNT ? [ACCOUNT] : [];
       else if (table === "sms_credit_ledger") data = LEDGER;
@@ -51,6 +54,7 @@ function from(table) {
 // behaviour that matters: idempotency, and refusing to overdraw.
 async function rpc(name, args) {
   RPC.push({ name, args });
+  if (RPC_ERROR) return { data: null, error: RPC_ERROR };
   const prior = LEDGER.find((e) => e.idempotency_key === args.p_idempotency_key);
   if (prior) return { data: [{ ok: true, balance_after: prior.balance_after_cents, reason: "already_applied" }], error: null };
 
@@ -179,6 +183,38 @@ const account = (over = {}) => ({
 
   // Checkout must not itself grant credit — only the webhook does.
   check("starting a checkout does not move the balance", ACCOUNT.balance_cents, 5000);
+
+  // ---------------------------------------------------------- setup faults --
+  //
+  // These three all used to render as "the credit tables are not set up yet",
+  // which is only true for the first. The other two sent people off to re-run a
+  // migration that had already worked while the real fault stayed hidden.
+
+  ACCOUNT = null;
+  TABLE_ERROR = { message: "Could not find the table 'public.sms_credit_accounts' in the schema cache" };
+  r = await call("GET", "/api/credit");
+  check("a missing table is reported as a missing table", r.body.setup.reason, "no_tables");
+
+  TABLE_ERROR = null; RPC_ERROR = { message: "function debit_sms_credit does not exist" };
+  r = await call("GET", "/api/credit");
+  check("tables without functions are reported as a half-applied migration", r.body.setup.reason, "no_functions");
+
+  RPC_ERROR = null;
+  r = await call("GET", "/api/credit");
+  check("everything present but no credit yet says exactly that", r.body.setup.reason, "no_account_yet");
+
+  // The bug that started this: club_id was the primary key and therefore NOT
+  // NULL, so a deployment with no CLUB_ID set could never create an account —
+  // and the failure was reported as a missing migration.
+  INSERT_ERROR = { message: 'null value in column "club_id" violates not-null constraint' };
+  r = await call("POST", "/api/credit/checkout", { amount_cents: 5000 });
+  check("a constraint failure is not reported as a missing migration",
+    r.body.error.includes("not set up yet"), false);
+  check("it quotes the real database error", r.body.error.includes("club_id"), true);
+  check("and points at the fix", r.body.error.includes("NOT NULL"), true);
+  INSERT_ERROR = null;
+
+  ACCOUNT = account();
 
   // ------------------------------------------------------------- webhook ---
   const pi = (over = {}) => JSON.stringify({
