@@ -95,6 +95,7 @@ require.cache["STRIPE"] = {
     createCardSetupSession: async (a) => { STRIPE_CALLS.push(["setup", a]); return { id: "cs_2", url: "https://checkout.stripe.com/cs_2" }; },
     chargeSavedCard: async (a) => { STRIPE_CALLS.push(["charge", a]); return { id: "pi_auto" }; },
     describeCard: async () => ({ brand: "visa", last4: "4242", exp_month: 4, exp_year: 2030 }),
+    paymentMethodFromSetup: async () => "pm_from_setup",
     constructEvent: (raw, sig) => {
       if (sig !== "good") throw new Error("No signatures found matching the expected signature for payload");
       return JSON.parse(raw.toString());
@@ -258,6 +259,71 @@ const account = (over = {}) => ({
     JSON.stringify({ id: "evt_x", type: "invoice.paid", data: { object: {} } }), { "stripe-signature": "good" });
   check("an event we do not handle is acknowledged, not retried forever", r.status, 200);
   check("and is reported as ignored", r.body.ignored, "invoice.paid");
+
+  // ------------------------------------- what Stripe actually sends back ----
+  //
+  // The live failure. Metadata set on a Checkout Session stays on the session:
+  // the PaymentIntent it creates carries none of it. So the real
+  // payment_intent.succeeded arrived with empty metadata, the handler could not
+  // tell it was a top-up, and no credit was granted — on a payment that had
+  // genuinely gone through, silently, forever.
+  LEDGER = []; ACCOUNT = account({ balance_cents: 0 });
+  const bareIntent = JSON.stringify({
+    id: "evt_bare", type: "payment_intent.succeeded",
+    data: { object: { id: "pi_bare", amount: 5000, amount_received: 5000, metadata: {} } },
+  });
+  const session = (over = {}) => JSON.stringify({
+    id: "evt_cs", type: "checkout.session.completed",
+    data: { object: {
+      id: "cs_1", mode: "payment", payment_status: "paid", amount_total: 5000,
+      payment_intent: "pi_bare",
+      metadata: { purpose: "sms_credit_topup", club_id: "" },
+      ...over,
+    } },
+  });
+
+  await call("POST", "/api/stripe/webhook", bareIntent, { "stripe-signature": "good" });
+  check("an intent with no metadata alone credits nothing", ACCOUNT.balance_cents, 0);
+
+  await call("POST", "/api/stripe/webhook", session(), { "stripe-signature": "good" });
+  check("but the session event credits it", ACCOUNT.balance_cents, 5000);
+
+  // Both events describe one payment, so the second must not double it.
+  await call("POST", "/api/stripe/webhook", bareIntent, { "stripe-signature": "good" });
+  check("and the intent event afterwards does not credit twice", ACCOUNT.balance_cents, 5000);
+
+  // Order reversed: the intent (now carrying metadata, as it will once
+  // payment_intent_data is set) lands first, then the session.
+  LEDGER = []; ACCOUNT = account({ balance_cents: 0 });
+  await call("POST", "/api/stripe/webhook", JSON.stringify({
+    id: "evt_i2", type: "payment_intent.succeeded",
+    data: { object: { id: "pi_both", amount: 5000, amount_received: 5000,
+      metadata: { purpose: "sms_credit_topup", club_id: "" } } },
+  }), { "stripe-signature": "good" });
+  check("the intent event credits when it does carry metadata", ACCOUNT.balance_cents, 5000);
+  await call("POST", "/api/stripe/webhook", session({ payment_intent: "pi_both" }), { "stripe-signature": "good" });
+  check("and the session afterwards is a no-op, not a second credit", ACCOUNT.balance_cents, 5000);
+
+  // An unpaid session must never grant credit.
+  LEDGER = []; ACCOUNT = account({ balance_cents: 0 });
+  await call("POST", "/api/stripe/webhook", session({ id: "cs_unpaid", payment_status: "unpaid", payment_intent: "pi_unpaid" }), { "stripe-signature": "good" });
+  check("an unpaid session credits nothing", ACCOUNT.balance_cents, 0);
+
+  // A session for something else entirely.
+  await call("POST", "/api/stripe/webhook", session({ id: "cs_other", payment_intent: "pi_other2", metadata: { purpose: "merch" } }), { "stripe-signature": "good" });
+  check("a session for something else is not SMS credit", ACCOUNT.balance_cents, 0);
+
+  // Setup mode saves a card. This used to call a function that did not exist,
+  // so it threw, returned 500, and Stripe retried it for three days.
+  ACCOUNT = account({ stripe_payment_method_id: null });
+  r = await call("POST", "/api/stripe/webhook", JSON.stringify({
+    id: "evt_setup", type: "checkout.session.completed",
+    data: { object: { id: "cs_setup", mode: "setup", setup_intent: "seti_1", metadata: { club_id: "" } } },
+  }), { "stripe-signature": "good" });
+  check("a setup session is handled rather than throwing", r.status, 200);
+  check("and the card is stored for automatic top-up", ACCOUNT.stripe_payment_method_id, "pm_from_setup");
+
+  ACCOUNT = account();
 
   // Refunds come back out.
   LEDGER = []; ACCOUNT = account({ balance_cents: 5000 });
