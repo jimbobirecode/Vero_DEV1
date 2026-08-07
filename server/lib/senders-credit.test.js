@@ -10,6 +10,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = "s";
 process.env.CLUB_ID = "";
 
 let ACCOUNT = null, SETTINGS = [], LEDGER = [], LOGGED = [];
+let INSERT_FAILS_ONCE = null;
 
 const Module = require("module");
 const rr = Module._resolveFilename;
@@ -27,7 +28,14 @@ function from(table) {
     order: () => api, limit: () => api, range: () => api, lt: () => api, maybeSingle: () => api,
     single: () => { single = true; return api; },
     insert(row) {
-      if (table === "message_log") { LOGGED.push(row); return { select: () => ({ single: async () => ({ data: { log_id: "log-" + LOGGED.length }, error: null }) }) }; }
+      if (table === "message_log") {
+        LOGGED.push(row);
+        // Fails the first (extended) insert only, so the fallback path runs.
+        if (INSERT_FAILS_ONCE && LOGGED.length === 1) {
+          return { select: () => ({ single: async () => ({ data: null, error: { message: INSERT_FAILS_ONCE } }) }) };
+        }
+        return { select: () => ({ single: async () => ({ data: { log_id: "log-" + LOGGED.length }, error: null }) }) };
+      }
       return api;
     },
     update(row) { if (table === "sms_credit_accounts") ACCOUNT = { ...(ACCOUNT || {}), ...row }; return api; },
@@ -122,7 +130,7 @@ const BODY = "Club: how was your visit? https://x";   // one segment
 // needs a fresh module instance to pick up new settings.
 function reset({ settings, acct, carrierOk = true }) {
   SETTINGS = settings; ACCOUNT = acct; LEDGER = []; LOGGED = [];
-  WARNINGS = []; CHARGES = []; CARRIER_CALLS = 0; CARRIER_OK = carrierOk;
+  WARNINGS = []; CHARGES = []; CARRIER_CALLS = 0; CARRIER_OK = carrierOk; INSERT_FAILS_ONCE = null;
   delete require.cache[require.resolve("./senders.js")];
   delete require.cache[require.resolve("./sms-credit-store.js")];
   return require("./senders.js").sendSms;
@@ -236,6 +244,22 @@ function reset({ settings, acct, carrierOk = true }) {
   send = reset({ settings: [{ key: "sms_credit_enabled", value: "true" }], acct: account({ balance_cents: 0 }) });
   await send("+15551234567", BODY, CREDS, "M1", { kind: "survey" });
   check("with no rate configured, an empty balance does not block", CARRIER_CALLS, 1);
+
+  // --------------------------------------- the delivery record must survive --
+  //
+  // The extended insert carries columns the original message_log did not have.
+  // When it fails — a missing migration, or a CLUB_ID that is not a uuid, which
+  // is what actually happened — the row must still be written in its original
+  // shape. message_log is what the audit trail and the "already sent" checks
+  // read, so dropping a row is far worse than dropping the meter reading on it.
+  send = reset({ settings: RATE, acct: null });
+  INSERT_FAILS_ONCE = 'invalid input syntax for type uuid: "DEV"';
+  await send("+15551234567", BODY, CREDS, "M1", { kind: "survey" });
+  check("a failed extended insert still records the message", LOGGED.length, 2);
+  check("the retry drops only the extra columns", LOGGED[1].club_id, undefined);
+  check("and keeps the delivery record itself", LOGGED[1].status, "sent");
+  check("with the recipient intact", LOGGED[1].recipient, "+15551234567");
+  INSERT_FAILS_ONCE = null;
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
