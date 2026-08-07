@@ -3129,7 +3129,9 @@
         await loadInsights();
       } else {
         const err = res ? await res.json().catch(()=>({})) : {};
-        alert(err.error || 'Failed to generate insights. Make sure ANTHROPIC_API_KEY is configured.');
+        // Naming an environment variable to a GM is no help — they cannot set
+      // one. The server's own message is more specific when it has one.
+      alert(err.error || 'Could not generate insights. The AI service is not configured on the server — ask whoever administers it to check.');
       }
     } catch(e){
       alert('Error: ' + e);
@@ -5871,7 +5873,7 @@
     },
     training: {
       title: 'How Training Actions works',
-      text: 'Populated by: AI analysis of survey comments. Click "Generate analysis" on the Server Performance tab to create training plans. The AI analyzes scores and comments, then creates prioritized action steps (Immediate / This week / Ongoing). Check off steps as completed. Requires ANTHROPIC_API_KEY to be set.'
+      text: 'Runs automatically every Friday morning, at 7:00am Eastern (6:00am while the clocks are back). It reads the week\'s survey scores and comments for each outlet and writes one plan per outlet, with the steps ordered Immediate / This week / Ongoing. Check steps off as they are done — a plan is never overwritten, so last week\'s stays readable alongside this week\'s. An outlet with no responses that week gets no plan rather than an empty one. You do not need to trigger it; the "Generate analysis" button on Server Performance is a different thing — it looks at one server\'s recent scores on demand, rather than the whole outlet\'s week.'
     },
     alerts: {
       title: 'How Case Alerts works',
@@ -5879,7 +5881,7 @@
     },
     insights: {
       title: 'How AI Insights works',
-      text: 'Populated by: weekly AI analysis of all open-text survey comments. The AI identifies patterns and produces actionable recommendations. Requires ANTHROPIC_API_KEY environment variable to be set on your server. Insights appear automatically once comment volume is sufficient.'
+      text: 'Written by the same Friday morning run as Training Actions, from the week\'s open-text comments for each outlet. It reports the themes members actually raised, with an urgency of Critical, Watch or Maintain. Fewer than three comments in the week and it says the sample is too small rather than inventing a pattern from one remark. You can also run it on demand from the button on this screen.'
     },
     upload: {
       title: 'How Upload works',
