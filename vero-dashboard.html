@@ -25,6 +25,9 @@
      turned off), Inter at 400/500 only, IBM Plex Mono for eyebrows and data. -->
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,WONK@0,9..144,400..500,0;1,9..144,400,0&family=Inter:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="/supabase.min.js"></script>
+<!-- Charts. Same origin, so the CSP (script-src 'self') is untouched, and no
+     build step: Tremor is React + Tailwind and this dashboard is neither. -->
+<script src="/vero-charts.js"></script>
 <style>
   :root{
     /* Club Vero brand identity v1.0 — the five brand colours, verbatim. */
@@ -1334,6 +1337,12 @@
             <tr><th>Date</th><th>Type</th><th>Amount</th><th>Balance after</th><th>Note</th></tr>
           </table>
         </div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;">
+        <h2>Daily spend</h2>
+        <div class="panel-sub">What credit is going out per day. A flat stretch means nothing was sent; a spike is usually an event blast.</div>
+        <div id="creditSpendChart" style="margin-top:10px;"></div>
       </div>
 
       <div class="panel" style="margin-top:16px;">
@@ -3134,24 +3143,76 @@
       grid.dataset.loaded = 'true';
       return;
     }
+    // Small multiples: four charts, one series each. That is why none of them
+    // carries a legend or a categorical colour — with a single series the title
+    // already says what is plotted, and a legend box with one swatch just
+    // restates it. Four series on one axis would have needed a categorical
+    // palette and would have buried the individual movements this screen exists
+    // to show.
     const specs = [
-      {label:'CSAT', data:d.csat, min:3, max:5, color:'var(--sage)'},
-      {label:'Food', data:d.food, min:3, max:5, color:'var(--brass)'},
-      {label:'Service', data:d.service, min:3, max:5, color:'var(--forest)'},
-      {label:'NPS', data:d.nps, min:30, max:80, color:'var(--brick)'}
+      {label:'CSAT',    key:'csat',    data:d.csat,    suffix:'/5', dp:2},
+      {label:'Food',    key:'food',    data:d.food,    suffix:'/5', dp:2},
+      {label:'Service', key:'service', data:d.service, suffix:'/5', dp:2},
+      {label:'NPS',     key:'nps',     data:d.nps,     suffix:'',   dp:0}
     ];
-    grid.innerHTML = specs.map(s=>{
-      const validData = s.data.filter(v => v != null);
-      if(!validData.length) return `<div class="chart-box"><div class="chart-title">${s.label}</div><div class="chart-val">—</div><div style="color:var(--ink-soft);font-size:11px;padding:16px 0;">No data</div></div>`;
-      const path = sparkPath(validData, 220, 60, s.min, s.max);
-      const last = validData[validData.length-1];
-      return `<div class="chart-box">
-        <div class="chart-title">${s.label}</div>
-        <div class="chart-val">${last}</div>
-        <svg width="220" height="60" viewBox="0 0 220 60"><polyline points="${path}" fill="none" stroke="${s.color}" stroke-width="2.5"/></svg>
-        <div class="axis-labels">${trendMonths.map(m=>`<span>${m}</span>`).join('')}</div>
-      </div>`;
-    }).join('');
+
+    grid.innerHTML = '';
+    specs.forEach(s=>{
+      const box = document.createElement('div');
+      box.className = 'chart-box';
+      grid.appendChild(box);
+
+      const title = document.createElement('div');
+      title.className = 'chart-title';
+      title.textContent = s.label;
+      box.appendChild(title);
+
+      const valid = s.data.filter(v => v != null);
+      const last = valid.length ? valid[valid.length-1] : null;
+
+      // The headline number leads; the chart is the context for it.
+      const val = document.createElement('div');
+      val.className = 'chart-val';
+      val.textContent = last == null ? '—' : last + s.suffix;
+      box.appendChild(val);
+
+      // Change against the start of the window, so a flat month reads as flat
+      // rather than as an unexplained number.
+      if(valid.length > 1){
+        const delta = last - valid[0];
+        const d2 = document.createElement('div');
+        d2.style.cssText = 'font-size:11px;margin:2px 0 8px;color:' +
+          (delta > 0 ? 'var(--sage)' : delta < 0 ? 'var(--brick)' : 'var(--ink-soft)');
+        d2.textContent = (delta > 0 ? '▲ +' : delta < 0 ? '▼ ' : '') +
+          (delta === 0 ? 'No change' : delta.toFixed(s.dp)) + (delta === 0 ? '' : ' since ' + trendMonths[0]);
+        box.appendChild(d2);
+      }
+
+      const plot = document.createElement('div');
+      box.appendChild(plot);
+
+      if(!valid.length){
+        VeroCharts.empty(plot, 'No data for this period.');
+        return;
+      }
+
+      // A single series reads better filled than as a bare stroke.
+      VeroCharts.area(plot, {
+        data: trendMonths.map((m,i)=>({ month:m, value:s.data[i] })),
+        index: 'month',
+        categories: ['value'],
+        colors: [VeroCharts.PALETTE.categorical[0]],
+        height: 132,
+        indexLabel: 'Month',
+        ariaLabel: s.label + ' by month',
+        valueFormatter: (v)=> Number(v).toFixed(s.dp),
+        emptyMessage: 'No data for this period.'
+      });
+      // The series label is on the card title, so the table column should say
+      // what the number is rather than repeat "value".
+      const th = plot.querySelector('.vc-table th:last-child');
+      if(th) th.textContent = s.label;
+    });
     grid.dataset.loaded = 'true';
   }
 
@@ -3599,17 +3660,24 @@
       ];
       const breakdownEl = document.getElementById('golfScoreBreakdown');
       if(scores.some(s => s.val != null)){
-        breakdownEl.innerHTML = scores.map(s => {
-          const pct = s.val != null ? Math.round((s.val / s.max) * 100) : 0;
-          const color = s.val >= 4 ? 'var(--sage)' : s.val >= 3 ? 'var(--amber)' : 'var(--brick)';
-          return `<div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:12px;min-width:120px;color:var(--ink);">${s.label}</span>
-            <div style="flex:1;height:8px;background:var(--sand);border-radius:4px;overflow:hidden;">
-              <div style="width:${pct}%;height:100%;background:${s.val != null ? color : 'var(--sand)'};border-radius:4px;transition:width .3s;"></div>
-            </div>
-            <span style="font-size:13px;font-weight:500;min-width:36px;text-align:right;">${s.val != null ? s.val + '/5' : '—'}</span>
-          </div>`;
-        }).join('');
+        // A single ratio against a limit is a meter, not a bar chart. These were
+        // also drawing their track in var(--sand), a token that does not exist —
+        // so the unfilled part rendered transparent and a low score looked like
+        // a short bar floating in nothing rather than a small share of five.
+        breakdownEl.innerHTML = '';
+        scores.forEach(s => {
+          const row = document.createElement('div');
+          row.style.marginBottom = '8px';
+          breakdownEl.appendChild(row);
+          VeroCharts.meter(row, {
+            label: s.label,
+            value: s.val == null ? 0 : s.val,
+            max: s.max,
+            // Status, and it ships with the number beside it — never colour alone.
+            status: s.val == null ? 'neutral' : s.val >= 4 ? 'good' : s.val >= 3 ? 'warning' : 'critical',
+            valueFormatter: (v) => s.val == null ? '—' : v.toFixed(1) + '/5'
+          });
+        });
       } else {
         breakdownEl.innerHTML = '<div style="font-size:13px;color:var(--ink-soft);">No scores yet — upload a tee sheet to start sending golf surveys.</div>';
       }
@@ -3798,13 +3866,20 @@
 
       html += lb.map((s, i) => {
         const barW = Math.round((s.composite_score / 5) * 160);
-        const barColor = s.composite_score >= 4 ? 'var(--sage)' : s.composite_score >= 3 ? 'var(--brass)' : 'var(--brick)';
+        // Status by threshold, and it appears twice on purpose: the bar carries
+        // the colour, the number beside it carries the meaning. The number used
+        // to be painted in the same colour, which put a light brass score on an
+        // ivory surface and made the value harder to read the moment it
+        // mattered. Text wears text tokens; the mark carries identity.
+        const barColor = s.composite_score >= 4 ? VeroCharts.PALETTE.status.good
+          : s.composite_score >= 3 ? VeroCharts.PALETTE.status.warning
+          : VeroCharts.PALETTE.status.critical;
         const rankIcon = i === 0 ? '1' : i === 1 ? '2' : i === 2 ? '3' : (i+1);
         return `<div class="parse-row" style="grid-template-columns:40px 1fr 200px 60px 60px 60px 60px 60px;">` +
           `<span style="font-weight:500;color:${i < 3 ? 'var(--forest)' : 'var(--ink-soft)'};">${rankIcon}</span>` +
           `<span style="font-weight:500;">${esc(s.server_name)} <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${s.survey_count} surveys)</span></span>` +
-          `<span><div style="background:var(--line);border-radius:4px;height:12px;width:160px;display:inline-block;vertical-align:middle;"><div style="background:${barColor};border-radius:4px;height:12px;width:${barW}px;"></div></div></span>` +
-          `<span style="font-weight:500;color:${barColor};">${s.composite_score.toFixed(1)}</span>` +
+          `<span><div style="background:var(--line);border-radius:6px;height:12px;width:160px;display:inline-block;vertical-align:middle;" title="${s.composite_score.toFixed(1)} out of 5"><div style="background:${barColor};border-radius:6px;height:12px;width:${barW}px;"></div></div></span>` +
+          `<span style="font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums;">${s.composite_score.toFixed(1)}</span>` +
           `<span>${s.avg_nps.toFixed(1)}</span>` +
           `<span>${s.avg_overall.toFixed(1)}</span>` +
           `<span>${s.avg_food.toFixed(1)}</span>` +
@@ -3968,6 +4043,43 @@
   // calls succeed. Opened standalone (e.g. this preview), they fail fast and
   // everything falls back to the in-page demo state — the UI stays usable
   // either way, but only persists for real once deployed.
+  // The chart library is a separate same-origin script. If it ever fails to
+  // load, every screen that draws a chart must still render its numbers — a
+  // missing visual is a degraded page, but an uncaught ReferenceError is a
+  // blank one, and it takes the surrounding tables down with it.
+  if(typeof window.VeroCharts === 'undefined'){
+    console.error('[charts] vero-charts.js did not load — charts are omitted; tables and figures are unaffected.');
+    const note = (host, msg) => {
+      if(!host) return host;
+      host.innerHTML = '';
+      const d = document.createElement('div');
+      d.style.cssText = 'font-size:11.5px;color:var(--ink-soft);padding:12px 0;';
+      d.textContent = msg || 'Chart unavailable — the figures are in the table below.';
+      host.appendChild(d);
+      return host;
+    };
+    window.VeroCharts = {
+      line: note, area: note, bar: note, empty: note,
+      // The golf breakdown has no table behind it, so the meter keeps a plain
+      // fallback rather than disappearing.
+      meter(host, o){
+        if(!host) return host;
+        host.innerHTML = '';
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:10px;font-size:11.5px;';
+        const l = document.createElement('span'); l.textContent = o.label || '';
+        const v = document.createElement('span');
+        v.style.marginLeft = 'auto';
+        v.textContent = o.valueFormatter ? o.valueFormatter(o.value) : String(o.value);
+        row.appendChild(l); row.appendChild(v); host.appendChild(row);
+        return host;
+      },
+      PALETTE: { categorical:['#009C85','#B78733','#9C4A34'],
+                 status:{ good:'#267B47', warning:'#BA8535', critical:'#9C4A34', neutral:'#5B6259' },
+                 sequential:['#B2E6DD','#7ACFC1','#41B8A5','#009C85','#00705F'] }
+    };
+  }
+
   const API_BASE = '/api';
 
   // Escape anything that originated outside the dashboard before it reaches
@@ -6324,6 +6436,8 @@
     });
     payTable.innerHTML = pay;
 
+    renderCreditSpend(d);
+
     let use = useHead;
     if(!d.usage.length){
       use += '<tr><td colspan="4" style="color:var(--ink-soft);padding:16px 0;">No messages sent yet.</td></tr>';
@@ -6337,6 +6451,60 @@
       </tr>`;
     });
     useTable.innerHTML = use;
+  }
+
+  // Daily spend, from the usage rollup the history endpoint already returns.
+  //
+  // The rollup is per day AND per message type, so a day with surveys and staff
+  // surveys arrives as two rows. They are summed back into one figure per day:
+  // the question this chart answers is "how fast is credit going out", and the
+  // split by type is what the table underneath is for.
+  //
+  // Days with no sends are filled in as zero rather than skipped — a gap that
+  // silently closes up makes a quiet week look like a busy one.
+  function renderCreditSpend(d){
+    const host = document.getElementById('creditSpendChart');
+    if(!host) return;
+
+    const byDay = new Map();
+    (d.usage || []).forEach(u=>{
+      byDay.set(u.date, (byDay.get(u.date) || 0) + Number(u.amount_cents || 0));
+    });
+    if(!byDay.size){
+      VeroCharts.empty(host, 'No messages sent yet — daily spend will appear here once surveys start going out.');
+      return;
+    }
+
+    const days = [...byDay.keys()].sort();
+    const first = new Date(days[0] + 'T00:00:00Z');
+    const last = new Date(days[days.length-1] + 'T00:00:00Z');
+    const series = [];
+    for(let t = first.getTime(); t <= last.getTime(); t += 86400000){
+      const key = new Date(t).toISOString().slice(0,10);
+      series.push({
+        day: new Date(t).toLocaleDateString(undefined, { month:'short', day:'numeric', timeZone:'UTC' }),
+        spend: Math.round((byDay.get(key) || 0) * 100) / 100
+      });
+    }
+
+    // Cap the window so a long history stays readable rather than becoming a
+    // hairline. The table keeps everything reachable.
+    const windowed = series.slice(-45);
+
+    VeroCharts.area(host, {
+      data: windowed,
+      index: 'day',
+      categories: ['spend'],
+      colors: [VeroCharts.PALETTE.categorical[0]],
+      height: 190,
+      zeroBased: true,          // spend is a magnitude; a truncated axis would overstate a quiet day
+      indexLabel: 'Day',
+      valueLabel: 'Spend',
+      ariaLabel: 'SMS credit spent per day',
+      valueFormatter: (v)=> creditMoney(v, d.currency)
+    });
+    const th = host.querySelector('.vc-table th:last-child');
+    if(th) th.textContent = 'Spend';
   }
 
   // Stripe sends the club back here after Checkout, at /?topup=success.
