@@ -66,11 +66,7 @@ async function handleEvent(event) {
   switch (event.type) {
     case "checkout.session.completed": {
       if (object.mode === "setup") return saveCardFromSetup(object);
-      // A payment-mode session also produces payment_intent.succeeded, which is
-      // where the credit is granted. Handling both would double-credit were it
-      // not for the idempotency key; granting on one of them keeps the intent
-      // explicit rather than relying on the guard to clean up after us.
-      return;
+      return grantCreditFromSession(object, event.id);
     }
 
     case "payment_intent.succeeded":
@@ -84,7 +80,72 @@ async function handleEvent(event) {
   }
 }
 
-// Money in.
+// Money in, from the Checkout session.
+//
+// This is the belt to payment_intent.succeeded's braces, and for a while it was
+// the only one that would have worked: session metadata is set directly by us,
+// whereas the metadata on the PaymentIntent depends on having passed
+// payment_intent_data correctly — which originally we had not, so every top-up
+// arrived unrecognisable and no credit was granted.
+//
+// Both paths key on the payment intent id, so whichever event lands first
+// credits and the other is a no-op.
+async function grantCreditFromSession(session, eventId) {
+  if (session?.metadata?.purpose !== "sms_credit_topup") return;
+  if (session.payment_status && session.payment_status !== "paid") {
+    console.log(`[stripe] session ${session.id} completed but is not paid (${session.payment_status}) — not crediting`);
+    return;
+  }
+
+  const amount = Number(session.amount_total);
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  const intentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
+
+  const result = await store.creditAccount({
+    clubId: session.metadata?.club_id || undefined,
+    amountCents: amount,
+    entryType: "topup",
+    // The payment intent, so this and payment_intent.succeeded cannot both
+    // apply. Falls back to the session only when there is no intent to key on.
+    idempotencyKey: intentId ? `stripe:pi:${intentId}` : `stripe:cs:${session.id}`,
+    description: "Top-up",
+    paymentIntentId: intentId || null,
+    sessionId: session.id,
+  });
+
+  if (result.reason === "already_applied") {
+    console.log(`[stripe] session ${session.id} was already credited — the payment intent event got here first`);
+  } else if (result.ok) {
+    console.log(`[stripe] credited ${amount} cents from session ${session.id} (event ${eventId})`);
+  } else {
+    throw new Error(`Could not credit session ${session.id}: ${result.reason}`);
+  }
+}
+
+// Store the card a club saved through Checkout in setup mode.
+//
+// Called but never defined until now, so any setup-mode session threw a
+// ReferenceError, returned 500, and left Stripe retrying it for three days.
+async function saveCardFromSetup(session) {
+  const setupIntentId = typeof session.setup_intent === "string" ? session.setup_intent : session.setup_intent?.id;
+  if (!setupIntentId) return;
+
+  try {
+    const paymentMethod = await stripeLib.paymentMethodFromSetup(setupIntentId);
+    if (!paymentMethod) return;
+
+    const clubId = session.metadata?.club_id || undefined;
+    await store.updateAccount({ stripe_payment_method_id: paymentMethod }, clubId);
+    console.log(`[stripe] saved a card for future top-ups from session ${session.id}`);
+  } catch (e) {
+    // Worth a retry: without the stored reference, automatic top-up silently
+    // never fires and the club finds out when sending stops.
+    throw new Error(`Could not store the saved card from ${session.id}: ${e.message || e}`);
+  }
+}
+
+// Money in, from the payment intent.
 async function grantCredit(intent, eventId) {
   if (intent?.metadata?.purpose !== "sms_credit_topup") return;
 

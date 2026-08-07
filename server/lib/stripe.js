@@ -98,9 +98,28 @@ async function createTopupSession({ amountCents, currency = "USD", customerId, c
         },
       },
     }],
-    // Saves the card for auto top-up. Only set when the club asked for it —
-    // keeping a card on file that nobody agreed to is not ours to do.
-    payment_intent_data: saveCard ? { setup_future_usage: "off_session" } : undefined,
+    payment_intent_data: {
+      // The metadata has to be set HERE as well as on the session below.
+      //
+      // Metadata on a Checkout Session stays on the session; the PaymentIntent
+      // that session creates gets none of it. So payment_intent.succeeded
+      // arrived carrying nothing, the webhook could not tell it was a top-up,
+      // and no credit was ever granted — silently, on a payment that had
+      // genuinely succeeded. payment_intent_data is what puts it on the intent.
+      metadata: {
+        club_id: clubId || "",
+        purpose: "sms_credit_topup",
+        amount_cents: String(Math.round(amountCents)),
+      },
+      // Saves the card for auto top-up. Only set when the club asked for it —
+      // keeping a card on file that nobody agreed to is not ours to do.
+      ...(saveCard ? { setup_future_usage: "off_session" } : {}),
+    },
+    // And on the session, so checkout.session.completed can recognise it too.
+    // Either event is enough to credit, and both share an idempotency key
+    // derived from the payment intent, so whichever arrives first wins and the
+    // other is a no-op. One webhook shape being wrong should not cost a club
+    // its money.
     metadata: {
       club_id: clubId || "",
       purpose: "sms_credit_topup",
