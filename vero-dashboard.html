@@ -6191,6 +6191,18 @@
         `running out can never stop a send. Set <b>sms_rate_cents_per_segment</b> in Settings to the carrier's ` +
         `per-message price in cents.`, 'bad');
     }
+    // Not a credit problem, but this is where someone will see it — and it is
+    // the more serious of the two, because the same value builds every survey
+    // link that goes out.
+    if(d.base_url_mismatch){
+      const m = d.base_url_mismatch;
+      html += creditNotice(
+        `<b>SURVEY_BASE_URL points at ${esc(m.configured_host)}, but this dashboard is served from ${esc(m.actual_host)}.</b><br><br>` +
+        `Every survey link sent by SMS or email is built from that setting, so members are being sent links to ` +
+        `<b>${esc(m.configured_host)}</b> — if that hostname is wrong, those links go nowhere and nothing else in the product ` +
+        `would tell you, because the message sends fine and only the tap fails.<br><br>` +
+        `Set <b>SURVEY_BASE_URL</b> to <b>${esc(m.actual)}</b> on the server.`, 'bad');
+    }
     if(!d.stripe_ready){
       html += creditNotice(`Stripe is not configured on this deployment, so top-ups cannot be taken. Set <b>STRIPE_SECRET_KEY</b> and <b>STRIPE_WEBHOOK_SECRET</b>.`, 'warn');
     }
