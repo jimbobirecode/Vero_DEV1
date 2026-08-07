@@ -83,7 +83,7 @@ router.post("/test", async (req, res) => {
   try {
     const creds = await loadCredentials(club_id);
     if (provider === "sendly") {
-      await sendSms(to, "This is a test message from Vero. Your Sendly integration is working.", creds);
+      await sendSms(to, "This is a test message from Vero. Your Sendly integration is working.", creds, null, { kind: "integration_test" });
     } else if (provider === "sendgrid") {
       await sendEmail(to, "Vero test email", "This is a test message from Vero. Your SendGrid integration is working.", creds);
     } else {

@@ -153,7 +153,7 @@ router.post("/send", async (req, res) => {
 
   try {
     if (sendChannel === "sms") {
-      await sendSms(recipient, message, creds, logId);
+      await sendSms(recipient, message, creds, logId, { kind: "survey_manual" });
     } else {
       await sendEmail(recipient, "How was your visit?", message, creds, logId, {
         first_name: memberInfo?.first_name || "",

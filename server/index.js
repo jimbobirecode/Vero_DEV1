@@ -154,6 +154,10 @@ app.use("/api/scores",       requireAuth, minimumRole("dept_head"),       requir
 // defeat the point, so this sits at the same level as the audit trail.
 app.use("/api/staff-surveys", requireAuth, minimumRole("general_manager"), require("./routes/staff-surveys"));
 // The audit trail is itself sensitive — it names who accessed what.
+// What the club is charged for its SMS. Money, not operations: closing a period
+// fixes an invoice and repricing rewrites what messages cost, so this sits at
+// the same level as club configuration rather than with the reporting screens.
+app.use("/api/billing",      requireAuth, minimumRole("general_manager"), require("./routes/billing"));
 app.use("/api/audit",        requireAuth, minimumRole("general_manager"), require("./routes/audit"));
 app.use("/api/diagnostics",  requireAuth, minimumRole("general_manager"), require("./routes/diagnostics"));
 

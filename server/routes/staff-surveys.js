@@ -141,7 +141,7 @@ async function performStaffSend(linkBase, shiftDate) {
       // member_id is null throughout: these recipients are staff, not members.
       // message_log still records the send, so delivery stays auditable.
       if (channel === "sms") {
-        await sendSms(recipient, body, creds, null);
+        await sendSms(recipient, body, creds, null, { kind: "staff_survey" });
       } else {
         await sendEmail(recipient, staffEmailSubject(), body, creds, null, {
           first_name: firstName, last_name: (server.name || "").split(" ").slice(1).join(" "),

@@ -415,11 +415,13 @@ router.post("/:id/send-surveys", async (req, res) => {
       .eq("attendee_id", att.attendee_id);
 
     const link = `${baseUrl(req)}/s/${token}`;
-    const message = `${CLUB_NAME}: How was ${event.name}? We'd love your quick feedback — takes under a minute: ${link}`;
+    // Hyphen, not an em dash: an em dash is outside GSM-7 and re-encodes the
+    // whole message as UCS-2, tripling its segment cost. See lib/sms-billing.js.
+    const message = `${CLUB_NAME}: How was ${event.name}? We'd love your quick feedback - takes under a minute: ${link}`;
 
     try {
       if (sendChannel === "sms") {
-        await sendSms(recipient, message, creds, logId);
+        await sendSms(recipient, message, creds, logId, { kind: "event_survey" });
       } else {
         await sendEmail(recipient, `How was ${event.name}?`, message, creds, logId, {
           first_name: firstName,
