@@ -2009,7 +2009,7 @@
     // Coming back from Stripe Checkout lands on the dashboard root with a
     // ?topup= or ?card= flag. Handled after the default tab is chosen so it can
     // override it and land the club on the screen they just paid from.
-    handleTopupReturn();
+    handleTopupReturn().catch(e => console.error('[credit] return handler failed', e));
   }
 
   async function doLogin(){
@@ -2227,6 +2227,9 @@
     if(tab==='training') loadTrainingPlans();
     if(tab==='alerts') loadAlerts();
     if(tab==='insights') loadInsights();
+    // Leaving the screen retires the post-payment confirmation, so it does not
+    // reappear later in the session as though a second payment had landed.
+    if(tab !== 'billing') creditBanner = null;
     if(tab==='billing') { loadCredit(); loadCreditHistory(); }
     if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
@@ -6068,6 +6071,21 @@
 
   let creditState = null;
 
+  // A message that outlives a reload — the Stripe return confirmation, mainly.
+  // Held as state and rendered by loadCredit() rather than written into
+  // #creditNotices directly, because loadCredit() replaces that element's
+  // contents wholesale and would otherwise wipe it the moment its fetch
+  // resolved. That is exactly what happened to the first version of the
+  // post-payment confirmation: it appeared and vanished within a second.
+  let creditBanner = null;
+
+  function setCreditBanner(html, tone){
+    creditBanner = html ? { html, tone } : null;
+    const el = document.getElementById('creditNotices');
+    // Paint immediately so the message is up before the next fetch returns.
+    if(el && creditBanner) el.innerHTML = creditNotice(creditBanner.html, creditBanner.tone) + el.innerHTML;
+  }
+
   const creditMoney = (cents, currency) => {
     const symbol = { USD:'$', GBP:'£', EUR:'€', CAD:'$', AUD:'$' }[currency] || '$';
     const v = (Number(cents)||0)/100;
@@ -6123,7 +6141,9 @@
       ? `${auto.card.brand.toUpperCase()} ···· ${auto.card.last4} — replace`
       : 'Add a card';
 
-    let html = '';
+    // The post-payment confirmation goes first and survives this rebuild —
+    // see setCreditBanner().
+    let html = creditBanner ? creditNotice(creditBanner.html, creditBanner.tone) : '';
     if(d.state === 'empty' && d.enforced){
       html += creditNotice(
         `<b>SMS credit has run out, so text messages are not being sent.</b> Surveys are not lost — anyone who could not ` +
@@ -6307,30 +6327,96 @@
     useTable.innerHTML = use;
   }
 
-  // Stripe sends the club back here after Checkout. The balance is credited by
-  // their webhook, which may land a moment before or after this redirect, so
-  // the message is careful not to promise a number that has not arrived yet.
-  function handleTopupReturn(){
+  // Stripe sends the club back here after Checkout, at /?topup=success.
+  //
+  // Two things made the first version of this not work. It wrote its message
+  // straight into #creditNotices, which loadCredit() then overwrote the moment
+  // its own fetch resolved — so the confirmation flashed and vanished. And it
+  // re-read the balance once, four seconds later, on the assumption that
+  // Stripe's webhook would have landed by then; when it had not, the screen
+  // simply showed the old balance with no explanation.
+  //
+  // So: the banner is state that loadCredit() renders rather than something
+  // written over the top of it, and instead of guessing at the delay we watch
+  // for the payment to actually appear.
+  async function handleTopupReturn(){
     const params = new URLSearchParams(window.location.search);
     const topup = params.get('topup');
     const card = params.get('card');
     if(!topup && !card) return;
 
+    // Clear the query string first, so a refresh mid-poll does not start a
+    // second one.
+    window.history.replaceState({}, '', window.location.pathname);
+
     showTab('billing');
-    const notices = document.getElementById('creditNotices');
-    if(topup === 'success'){
-      notices.innerHTML = creditNotice('<b>Payment received.</b> The balance updates as soon as Stripe confirms it — usually within a few seconds. Refresh if it has not appeared.', 'good');
-      // One delayed re-read covers the usual case where the webhook lands just
-      // after the redirect.
-      setTimeout(loadCredit, 4000);
-    } else if(topup === 'cancelled'){
-      notices.innerHTML = creditNotice('Payment cancelled — no charge was made.', 'warn');
-    } else if(card === 'saved'){
-      notices.innerHTML = creditNotice('<b>Card saved.</b> Switch on automatic top-up below to use it.', 'good');
+
+    if(topup === 'cancelled'){
+      setCreditBanner('Payment cancelled — no charge was made.', 'warn');
+      return;
+    }
+    if(card === 'saved'){
+      setCreditBanner('<b>Card saved.</b> Switch on automatic top-up below to use it.', 'good');
+      return;
+    }
+    if(topup !== 'success') return;
+
+    setCreditBanner('<b>Payment received.</b> Waiting for Stripe to confirm it…', 'warn');
+    await waitForTopup();
+  }
+
+  // Watch for the top-up to arrive.
+  //
+  // Credit is granted by Stripe's webhook, not by this redirect, so the two
+  // race: the webhook usually lands first, but can be a few seconds behind. The
+  // ordering is handled by checking both — a payment that is already very
+  // recent when we arrive is ours, and otherwise we watch for one newer than
+  // whatever was there when we started.
+  async function waitForTopup(){
+    const RECENT_MS = 2 * 60 * 1000;   // a top-up this new, on arrival, is this one
+    const TIMEOUT_MS = 45000;
+    const INTERVAL_MS = 2500;
+
+    const newestTopup = async () => {
+      const res = await apiCall('/credit/history');
+      if(!res || !res.ok) return null;
+      const d = await res.json();
+      return (d.payments || []).find(p => p.type === 'topup') || null;
+    };
+
+    const before = await newestTopup();
+
+    // The webhook beat us here.
+    if(before && Date.now() - new Date(before.created_at).getTime() < RECENT_MS){
+      return confirmTopup(before);
     }
 
-    // Clear the query string so a refresh does not repeat the message.
-    window.history.replaceState({}, '', window.location.pathname);
+    const startedAt = Date.now();
+    while(Date.now() - startedAt < TIMEOUT_MS){
+      await new Promise(r => setTimeout(r, INTERVAL_MS));
+      const now = await newestTopup();
+      if(now && (!before || now.entry_id !== before.entry_id)){
+        return confirmTopup(now);
+      }
+    }
+
+    // Taken but not confirmed. Almost always the webhook: without it Stripe has
+    // the money and this deployment never hears about it, which is invisible
+    // from the club's side and needs saying out loud rather than leaving them
+    // staring at an unchanged balance.
+    setCreditBanner(
+      `<b>Your payment went through, but it has not been credited yet.</b> Credit is added when Stripe confirms the ` +
+      `payment to this server, and that confirmation has not arrived after 45 seconds.<br><br>` +
+      `Nothing is lost — Stripe retries for up to three days, so it will land on its own if the connection is simply slow. ` +
+      `If it never appears, the webhook is not set up: it should point at <b>/api/stripe/webhook</b> and ` +
+      `<b>STRIPE_WEBHOOK_SECRET</b> must be set on the server.`, 'bad');
+  }
+
+  async function confirmTopup(payment){
+    setCreditBanner(
+      `<b>${esc(payment.amount)} added.</b> Your balance is now ${esc(payment.balance_after)}.`, 'good');
+    // Both, so the balance and the payments list agree without a manual refresh.
+    await Promise.all([loadCredit(), loadCreditHistory()]);
   }
 
 
