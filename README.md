@@ -33,6 +33,7 @@ Tested: the server boots cleanly, serves both the dashboard and survey pages, an
 | `package.json` / `.env.example` | Node dependencies and the env vars the server expects. |
 | `schema.sql` | Postgres schema for Supabase: members, outlets (real Aronimink thresholds), visits, survey_responses, training_plans, case_alerts, club_integrations. |
 | `vault_setup.sql` | One-time SQL to enable the Vault helper function credentials are stored through. |
+| `migrations/sms-back-charge.sql` | **Billing clubs for the SMS they send.** Adds per-segment meter readings to `message_log` and a frozen-period table. See `docs/sms-back-charging.md`. |
 | `parse_pos_report.py` | Real, tested parser for Aronimink's actual POS export format. |
 | `edge-functions/` | The original Supabase Edge Function versions — kept as reference only. Not used in the Render deployment; logic is identical to `server/`, just Deno-flavored. |
 
@@ -81,6 +82,27 @@ Two things were added directly to the dashboard:
 - **`edge-functions/import_members.ts`** — server-side counterpart to the Members screen's CSV upload, for membership lists too large to comfortably parse in a browser tab; validates E.164 phone format and required fields per row.
 
 To make this real: point the dashboard's Save/Test buttons at `save_integrations.ts` and `import_members.ts` instead of their current in-page simulation, and run the one-time SQL in the comment at the bottom of `save_integrations.ts` to create the Vault helper function.
+
+## Back charging clubs for SMS (new)
+
+Vero pays the carrier for every text it sends; this is how that cost gets billed back to the club that caused it. Full detail in **`docs/sms-back-charging.md`** — the short version:
+
+**Carriers bill per segment, not per message**, and a segment is 160 characters only while every character is in the GSM-7 alphabet. One character that isn't — an em dash, a curly apostrophe, an emoji — re-encodes the whole message as UCS-2, where a segment holds 70 characters instead of 160.
+
+**This was already costing real money.** The golf survey template contained a single em dash (`—`), which made every golf survey cost **three segments instead of one**. Nothing in the product would have shown that until the carrier bill arrived. It's now a hyphen, and `sms-billing.test.js` asserts the segment cost of every outgoing template so a reword can't reintroduce it silently. The same character was in the event survey; also fixed.
+
+What was built:
+
+- **`server/lib/sms-billing.js`** — the meter. Pure functions: GSM-7 vs UCS-2 detection, proper segment counting (including the cases that quietly cost money — extension characters that take two septets, escape pairs that can't straddle a segment boundary, emoji that are two UCS-2 units), and pricing against a configurable rate card. No database, no network, so an invoice is reproducible six months later.
+- **`migrations/sms-back-charge.sql`** — stores each message's segments, encoding, and the unit price **in force when it was sent**. Snapshotted, not referenced: change the rate in September and August's invoice still adds up to what August's invoice said.
+- **`server/routes/billing.js`** — statement for a period, close a month (freezing what was invoiced), void, reprice historical rows, and a **cost preview** that prices a wording before it goes to the whole membership.
+
+Two design decisions worth stating plainly, because both look like omissions:
+
+- **There is no default SMS rate.** It ships at `0` and the statement says so in as many words. A plausible-looking invented price produces invoices that look right and aren't, which is far harder to catch than an obviously missing number. Metering runs from day one regardless — set `sms_rate_cents_per_segment` to the real Sendly price and `/api/billing/sms/reprice` applies it to everything already logged.
+- **Failed sends are never charged.** They sit in the same table as successes and look identical to a `COUNT(*)`, which is the single likeliest way a system like this overbills. They're counted and reported at zero so a club can see what it *isn't* being billed for.
+
+Still needed to go live: the actual per-segment price from Sendly. Everything else is in place and tested (110 tests across the two suites).
 
 ## Not yet built
 

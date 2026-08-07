@@ -56,7 +56,10 @@ eq("empty override is treated as no override",
   { template_id: "t-golf", survey_type: "golf", source: "type-default" });
 
 // --- wording per type
-eq("golf sms wording",  smsBody({ surveyType: "golf",   link: "L", clubName: "C" }), "C: How was your round? We'd love your quick feedback — takes under a minute: L");
+// A hyphen, not an em dash. The em dash this used to assert is outside GSM-7,
+// which re-encoded the whole message as UCS-2 and made every golf survey cost
+// three segments instead of one. sms-billing.test.js guards the cost directly.
+eq("golf sms wording",  smsBody({ surveyType: "golf",   link: "L", clubName: "C" }), "C: How was your round? We'd love your quick feedback - takes under a minute: L");
 eq("golf email subject", emailSubject({ surveyType: "golf" }), "How was your round?");
 eq("dining email subject", emailSubject({ surveyType: "food_bev" }), "How was your visit today?");
 

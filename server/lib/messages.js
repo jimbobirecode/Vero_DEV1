@@ -43,9 +43,18 @@ function resolveSurveyForVisit({ visit, templatesById = {}, templatesByType = {}
   };
 }
 
+// Every character in these bodies must be in the GSM-7 alphabet, and the whole
+// body should stay inside 160 septets. Both are billing constraints, not style
+// ones: a single character GSM-7 cannot carry — an em dash, a curly apostrophe,
+// an emoji — re-encodes the entire message as UCS-2, where a segment holds 70
+// characters instead of 160, and the club is charged three segments for what
+// used to cost one. sms-billing.test.js asserts the cost of each body below, so
+// a reword that changes the price fails the tests rather than the invoice.
 function smsBody({ surveyType, link, clubName = CLUB_NAME }) {
   if (surveyType === "golf") {
-    return `${clubName}: How was your round? We'd love your quick feedback — takes under a minute: ${link}`;
+    // Hyphen, not an em dash. The em dash that used to be here forced UCS-2 and
+    // made every golf survey cost three segments instead of one.
+    return `${clubName}: How was your round? We'd love your quick feedback - takes under a minute: ${link}`;
   }
   if (surveyType === "events") {
     return `${clubName}: Thanks for joining us. How was the event? Takes under a minute: ${link}`;

@@ -233,7 +233,7 @@ async function performSend(linkBase) {
 
     try {
       if (sendChannel === "sms") {
-        await sendSms(recipient, message, creds, logId);
+        await sendSms(recipient, message, creds, logId, { kind: "survey" });
       } else {
         const nameParts = recipientName.split(" ");
         await sendEmail(recipient, emailSubject({ surveyType }), message, creds, logId, {
