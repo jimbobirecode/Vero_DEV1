@@ -7,6 +7,50 @@ const { generateFollowUp } = require("../lib/ai");
 const recovery = require("../lib/recovery");
 const store = require("../lib/recovery-store");
 
+// GET /api/alerts/severity-stats?days=30
+//
+// Counts, not rows. The alerts list is paginated to 25, so charting whatever
+// happens to be on screen would draw a picture of the first page rather than of
+// the period — which is why this needs its own endpoint instead of the client
+// tallying what it already has.
+//
+// Declared before /:id so "severity-stats" is not read as an alert id.
+router.get("/severity-stats", async (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  // head + exact gives a count without transferring the rows, which for a busy
+  // club is the difference between four numbers and several thousand records.
+  const SEVERITIES = ["high", "medium", "low"];
+  const out = { period_days: days, since, by_severity: [], open_by_severity: [], total: 0, open: 0 };
+
+  try {
+    for (const severity of SEVERITIES) {
+      const { count, error } = await supabase
+        .from("case_alerts")
+        .select("alert_id", { count: "exact", head: true })
+        .gte("created_at", since)
+        .eq("severity", severity);
+      if (error) return res.status(500).json({ error: error.message });
+
+      const { count: openCount } = await supabase
+        .from("case_alerts")
+        .select("alert_id", { count: "exact", head: true })
+        .gte("created_at", since)
+        .eq("severity", severity)
+        .eq("status", "open");
+
+      out.by_severity.push({ severity, count: count || 0 });
+      out.open_by_severity.push({ severity, count: openCount || 0 });
+      out.total += count || 0;
+      out.open += openCount || 0;
+    }
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 // GET /api/alerts?status=open&limit=50&offset=0
 router.get("/", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);

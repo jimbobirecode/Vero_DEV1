@@ -166,6 +166,10 @@ app.use("/api/staff-surveys", requireAuth, minimumRole("general_manager"), requi
 // SMS credit — the balance, buying more, and what it was spent on. Money, so
 // it sits at the same level as club configuration rather than with reporting.
 app.use("/api/credit",       requireAuth, minimumRole("general_manager"), require("./routes/credit"));
+// Reportable analytics and their exports. dept_head and above: this is the
+// reporting the operational roles are meant to read, and the export is the same
+// data they can already see on screen.
+app.use("/api/reports",      requireAuth, minimumRole("dept_head"),         require("./routes/reports"));
 app.use("/api/audit",        requireAuth, minimumRole("general_manager"), require("./routes/audit"));
 app.use("/api/diagnostics",  requireAuth, minimumRole("general_manager"), require("./routes/diagnostics"));
 
