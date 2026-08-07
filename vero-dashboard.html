@@ -524,6 +524,7 @@
       <div class="heading">Setup</div>
       <div class="nav-item" data-tab="upload">Upload</div>
       <div class="nav-item" data-tab="builder">Survey Builder</div>
+      <div class="nav-item" data-tab="billing">SMS Billing</div>
       <div class="nav-item" data-tab="settings">Settings</div>
     </div>
 
@@ -1222,6 +1223,115 @@
             <button class="btn-secondary" id="messageLogPrev" onclick="messageLogPage(-1)" style="display:none;">Previous</button>
             <button class="btn-secondary" id="messageLogNext" onclick="messageLogPage(1)" style="display:none;">Next</button>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ SMS BILLING ============================ -->
+    <section class="screen" id="screen-billing">
+
+      <!-- Anything that needs a human decision before the numbers can be
+           trusted surfaces here, above the figures rather than beneath them.
+           Hidden when there is nothing to say. -->
+      <div id="billingNotices"></div>
+
+      <div class="kpi-row" id="billingKpis">
+        <div class="kpi"><div class="eyebrow">Segments sent</div><div class="value" id="billSegments">—</div><div class="delta" id="billMessages"></div></div>
+        <div class="kpi"><div class="eyebrow">Chargeable</div><div class="value" id="billChargeable">—</div><div class="delta" id="billIncluded"></div></div>
+        <div class="kpi"><div class="eyebrow">Amount</div><div class="value" id="billAmount">—</div><div class="delta" id="billRateNote"></div></div>
+        <div class="kpi"><div class="eyebrow">Period</div><div class="value" id="billPeriodStatus" style="font-size:20px;">—</div><div class="delta" id="billPeriodDates"></div></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+          <div>
+            <h2>Statement</h2>
+            <div class="panel-sub">Carriers bill per <b>segment</b>, not per message — 160 characters each, and only 70 if the wording contains a character GSM-7 cannot carry. This is what the club owes for the period.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select class="field" id="billPeriodSelect" style="width:auto;" onchange="loadBillingStatement()"></select>
+            <button class="btn-secondary" onclick="closeBillingPeriod()" id="billCloseBtn">Close &amp; invoice</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px;" id="billBreakdowns">
+          <div>
+            <div class="metric-label" style="margin-bottom:8px;">What it was spent on</div>
+            <table class="data-table" id="billByKind"><tr><th>Message type</th><th>Sent</th><th>Segments</th><th>Amount</th></tr></table>
+          </div>
+          <div>
+            <div class="metric-label" style="margin-bottom:8px;">How it was encoded</div>
+            <table class="data-table" id="billByEncoding"><tr><th>Encoding</th><th>Sent</th><th>Segments</th><th>Amount</th></tr></table>
+            <div style="font-size:11px;color:var(--ink-soft);margin-top:10px;line-height:1.5;">
+              <b>GSM-7</b> fits 160 characters per segment. <b>UCS-2</b> fits 70. A single em dash, curly apostrophe or emoji anywhere in a message forces the whole thing to UCS-2 and roughly triples its cost.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- The half of this screen that saves money rather than recovering it.
+           Deliberately above the rate card: the cheapest fix for an SMS bill is
+           wording that fits in one segment, not a renegotiated rate. -->
+      <div class="panel" style="margin-top:16px;">
+        <h2>Cost preview</h2>
+        <div class="panel-sub">Paste any wording to see what it will cost before it goes to the membership. Word processors and phones silently substitute curly quotes and em dashes — if copy was pasted from Word, Docs or Slack, check it here first.</div>
+        <div class="form-group">
+          <textarea class="field" id="billPreviewBody" rows="3" style="width:100%;font-family:inherit;" placeholder="Aronimink Golf Club: We'd love your quick feedback on today's visit. Takes under a minute: https://…"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <label style="font-size:12px;color:var(--ink-soft);">Recipients</label>
+          <input class="field" id="billPreviewRecipients" type="number" min="0" value="900" style="width:110px;">
+          <button class="btn-primary" onclick="previewSmsCost()">Price it</button>
+          <button class="btn-secondary" onclick="loadLiveTemplatesIntoPreview()">Check the live templates</button>
+        </div>
+        <div id="billPreviewResult" style="margin-top:16px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;">
+        <h2>Rate card</h2>
+        <div class="panel-sub">What the carrier charges per segment, and the margin on top. There is deliberately no default — an invented price produces invoices that look right and are not, so metering runs from day one but pricing waits for the real number from Sendly.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;max-width:820px;">
+          <div class="form-group">
+            <label>Carrier rate <span style="color:var(--ink-soft);font-weight:400;">(cents per segment)</span></label>
+            <input class="field" id="billRate" type="number" step="0.0001" min="0" placeholder="0.79">
+            <div style="font-size:10.5px;color:var(--ink-soft);margin-top:3px;">$0.0079 per segment → enter <b>0.79</b></div>
+          </div>
+          <div class="form-group">
+            <label>Markup <span style="color:var(--ink-soft);font-weight:400;">(%)</span></label>
+            <input class="field" id="billMarkup" type="number" step="0.1" min="0" placeholder="0">
+            <div style="font-size:10.5px;color:var(--ink-soft);margin-top:3px;">Kept separate so the pass-through cost is never lost.</div>
+          </div>
+          <div class="form-group">
+            <label>Included segments <span style="color:var(--ink-soft);font-weight:400;">(per period)</span></label>
+            <input class="field" id="billIncludedSegments" type="number" step="1" min="0" placeholder="0">
+            <div style="font-size:10.5px;color:var(--ink-soft);margin-top:3px;">Allowance used up before back charging starts.</div>
+          </div>
+          <div class="form-group">
+            <label>Currency</label>
+            <select class="field" id="billCurrency">
+              <option value="USD">USD ($)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="CAD">CAD ($)</option>
+              <option value="AUD">AUD ($)</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+          <button class="btn-primary" onclick="saveBillingRateCard()">Save rate card</button>
+          <button class="btn-secondary" onclick="repriceBilling(true)">Reprice older messages…</button>
+          <span id="billRateNoteSave" style="font-size:11.5px;"></span>
+        </div>
+        <div id="billRepriceResult" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;">
+        <h2>Closed periods</h2>
+        <div class="panel-sub">Once a month is closed the figures are frozen — that is what makes an invoice defensible months later. Anything that arrives afterwards shows as drift against the invoiced number, never in place of it.</div>
+        <div style="overflow-x:auto;">
+          <table class="data-table" id="billPeriodsTable">
+            <tr><th>Period</th><th>Sent</th><th>Segments</th><th>Charged</th><th>Amount</th><th>Invoice</th><th>Closed by</th><th></th></tr>
+          </table>
         </div>
       </div>
     </section>
@@ -2072,6 +2182,7 @@
     messagelog:['Message Log','Every SMS and email sent by the system'],
     upload:['Upload','One file. Less than a minute. Fully automated from here.'],
     builder:['Survey Builder','Survey templates and question wording'],
+    billing:['SMS Billing','What the club is charged for the texts it sends'],
     settings:['Settings','Club profile, channels, and access']
   };
 
@@ -2100,6 +2211,7 @@
     if(tab==='training') loadTrainingPlans();
     if(tab==='alerts') loadAlerts();
     if(tab==='insights') loadInsights();
+    if(tab==='billing') { initBillingPeriods(); loadBillingRateCard(); loadBillingStatement(); loadClosedPeriods(); }
     if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
     if(tab==='golf') { loadGolfOverview(); loadGolfSurveyLog(); loadGolfTemplate(); loadCrossover(); }
@@ -2109,10 +2221,14 @@
   const roleData = {
     sa: { badge:"Super Admin · Full Access", showStaff:true, maskNames:false, restrictedTabs:[] },
     gm: { badge:"General Manager · Full Access", showStaff:true, maskNames:false, restrictedTabs:[] },
-    fb: { badge:"F&B Director · Food & Service Only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','members'] },
-    ro: { badge:"Department Head · Read-only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','insights','upload','members'] },
-    sm: { badge:"Shift Manager · Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','golf','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings'] },
-    gsm: { badge:"Golf Shift Manager · Golf Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','upload','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings'] }
+    // 'billing' is restricted everywhere below General Manager, matching the
+    // server's own gate on /api/billing. Hiding it here is presentation only —
+    // the API refuses these roles regardless — but the two must agree, or a
+    // director clicks a screen that answers every request with 403.
+    fb: { badge:"F&B Director · Food & Service Only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','members','billing'] },
+    ro: { badge:"Department Head · Read-only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','insights','upload','members','billing'] },
+    sm: { badge:"Shift Manager · Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','golf','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing'] },
+    gsm: { badge:"Golf Shift Manager · Golf Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','upload','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing'] }
   };
 
   document.querySelectorAll('.role-opt').forEach(btn=>{
@@ -5925,6 +6041,323 @@
   }
 
   /* ---------- club settings ---------- */
+  /* ---------- SMS billing ----------
+     The server does every piece of arithmetic (server/lib/sms-billing.js) and
+     this renders it. Nothing here recomputes a segment count or a price: a
+     second implementation in the browser is a second implementation to be
+     wrong, and the number a manager reads off this screen has to be the number
+     on the invoice. */
+
+  const billMoney = (cents, currency) => {
+    const symbol = { USD:'$', GBP:'£', EUR:'€', CAD:'$', AUD:'$' }[currency] || '';
+    return symbol + (Number(cents||0)/100).toFixed(2);
+  };
+
+  const BILL_KIND_LABELS = {
+    survey:'Nightly surveys', survey_manual:'Manually sent surveys',
+    survey_on_visit:'Sent on visit logging', event_survey:'Event surveys',
+    staff_survey:'Staff shift surveys', integration_test:'Integration tests',
+    unattributed:'Sent before labelling'
+  };
+
+  function initBillingPeriods(){
+    const sel = document.getElementById('billPeriodSelect');
+    if(sel.options.length) return;
+    const now = new Date();
+    for(let i=0;i<13;i++){
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-i, 1));
+      const value = d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0');
+      const label = d.toLocaleDateString('en-US',{ month:'long', year:'numeric', timeZone:'UTC' });
+      sel.insertAdjacentHTML('beforeend', `<option value="${value}">${esc(label)}${i===0?' (current)':''}</option>`);
+    }
+  }
+
+  function billNotice(text, tone){
+    const colour = tone === 'bad' ? 'var(--brick)' : tone === 'good' ? 'var(--sage)' : 'var(--ink-soft)';
+    return `<div class="panel" style="margin-bottom:14px;border-left:3px solid ${colour};">
+      <div style="font-size:12.5px;line-height:1.55;">${text}</div></div>`;
+  }
+
+  async function loadBillingStatement(){
+    const period = document.getElementById('billPeriodSelect').value;
+    const notices = document.getElementById('billingNotices');
+    const res = await apiCall('/billing/sms?period=' + encodeURIComponent(period));
+    if(!res){ notices.innerHTML = billNotice('No backend connected — billing figures come from the server.','bad'); return; }
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      notices.innerHTML = billNotice(esc(err.error || 'Could not load the statement.'), 'bad');
+      return;
+    }
+    const d = await res.json();
+
+    document.getElementById('billSegments').textContent = (d.totals.segments_sent||0).toLocaleString();
+    document.getElementById('billMessages').textContent =
+      `${(d.totals.messages_sent||0).toLocaleString()} message${d.totals.messages_sent===1?'':'s'}` +
+      (d.totals.messages_failed ? ` · ${d.totals.messages_failed} failed, not billed` : '');
+    document.getElementById('billChargeable').textContent = (d.totals.segments_charged||0).toLocaleString();
+    document.getElementById('billIncluded').textContent = d.totals.segments_included
+      ? `${d.totals.segments_included.toLocaleString()} covered by the allowance` : '';
+    document.getElementById('billAmount').textContent = d.totals.amount || billMoney(d.totals.amount_cents, d.currency);
+    document.getElementById('billRateNote').textContent = d.rate.configured
+      ? `${d.rate.unit_price_cents}¢ per segment` + (d.rate.markup_pct ? ` · incl. ${d.rate.markup_pct}% markup` : '')
+      : 'No rate configured';
+
+    const statusEl = document.getElementById('billPeriodStatus');
+    statusEl.textContent = d.closed ? (d.status === 'invoiced' ? 'Invoiced' : 'Closed') : 'Open';
+    statusEl.style.color = d.closed ? 'var(--sage)' : 'var(--ink)';
+    document.getElementById('billPeriodDates').textContent = d.closed && d.closed_at
+      ? 'Frozen ' + new Date(d.closed_at).toLocaleDateString()
+      : 'Still accruing';
+
+    const closeBtn = document.getElementById('billCloseBtn');
+    closeBtn.style.display = d.closed ? 'none' : '';
+
+    // Everything that needs a decision, stated plainly and above the numbers.
+    let noticeHtml = '';
+    if(!d.rate.configured){
+      noticeHtml += billNotice(
+        `<b>No SMS rate is configured, so everything below prices at zero.</b> This is deliberate — an invented ` +
+        `per-segment price produces invoices that look right and are not. Enter the real figure from Sendly in the ` +
+        `Rate card below, then use <b>Reprice older messages</b> to apply it to what has already been sent. ` +
+        `Segments have been counted correctly the whole time; only the pricing is waiting.`, 'bad');
+    }
+    (d.warnings||[]).forEach(w=>{ noticeHtml += billNotice(esc(w), 'warn'); });
+    if(d.closed && d.recomputed && !d.recomputed.matches){
+      const drift = d.recomputed.drift_cents;
+      noticeHtml += billNotice(
+        `This period is closed and the figures shown are the ones that were invoiced. Recalculating from current data ` +
+        `gives ${esc(billMoney(d.recomputed.amount_cents, d.currency))} — a difference of ` +
+        `<b>${esc(billMoney(Math.abs(drift), d.currency))}</b>. That is shown rather than applied, because a number the club ` +
+        `has already been given should not change on its own. Void the period if it genuinely needs reissuing.`, 'warn');
+    }
+    notices.innerHTML = noticeHtml;
+
+    let kindHtml = '<tr><th>Message type</th><th>Sent</th><th>Segments</th><th>Amount</th></tr>';
+    if(!(d.by_kind||[]).length){
+      kindHtml += '<tr><td colspan="4" style="color:var(--ink-soft);padding:16px 0;">No SMS sent in this period.</td></tr>';
+    }
+    (d.by_kind||[]).forEach(k=>{
+      kindHtml += `<tr><td><b>${esc(BILL_KIND_LABELS[k.kind] || k.kind)}</b></td>` +
+        `<td>${k.messages.toLocaleString()}</td><td>${k.segments.toLocaleString()}</td>` +
+        `<td>${esc(billMoney(k.amount_cents, d.currency))}</td></tr>`;
+    });
+    document.getElementById('billByKind').innerHTML = kindHtml;
+
+    let encHtml = '<tr><th>Encoding</th><th>Sent</th><th>Segments</th><th>Amount</th></tr>';
+    if(!(d.by_encoding||[]).length){
+      encHtml += '<tr><td colspan="4" style="color:var(--ink-soft);padding:16px 0;">Nothing to show yet.</td></tr>';
+    }
+    (d.by_encoding||[]).forEach(e=>{
+      const bad = e.encoding === 'ucs2';
+      encHtml += `<tr><td><b>${e.encoding === 'gsm7' ? 'GSM-7' : 'UCS-2'}</b>` +
+        `<div style="font-size:10.5px;color:${bad?'var(--brick)':'var(--ink-soft)'};">` +
+        `${bad ? '70 chars per segment — avoidable' : '160 chars per segment'}</div></td>` +
+        `<td>${e.messages.toLocaleString()}</td><td>${e.segments.toLocaleString()}</td>` +
+        `<td>${esc(billMoney(e.amount_cents, d.currency))}</td></tr>`;
+    });
+    document.getElementById('billByEncoding').innerHTML = encHtml;
+  }
+
+  async function loadBillingRateCard(){
+    const res = await apiCall('/settings');
+    if(!res || !res.ok) return;
+    const s = await res.json();
+    const set = (id, v) => { const el = document.getElementById(id); if(el && v !== undefined && v !== null) el.value = v; };
+    set('billRate', s.sms_rate_cents_per_segment ?? '');
+    set('billMarkup', s.sms_markup_pct ?? '');
+    set('billIncludedSegments', s.sms_included_segments_per_period ?? '');
+    set('billCurrency', s.sms_billing_currency || 'USD');
+  }
+
+  async function saveBillingRateCard(){
+    const note = document.getElementById('billRateNoteSave');
+    const rate = document.getElementById('billRate').value.trim();
+    if(rate !== '' && (isNaN(Number(rate)) || Number(rate) < 0)){
+      note.innerHTML = '<span style="color:var(--brick);">The carrier rate must be a number of cents, e.g. 0.79.</span>';
+      return;
+    }
+    note.innerHTML = '<span style="color:var(--ink-soft);">Saving…</span>';
+
+    const pairs = [
+      ['sms_rate_cents_per_segment', rate === '' ? '0' : rate],
+      ['sms_markup_pct', document.getElementById('billMarkup').value.trim() || '0'],
+      ['sms_included_segments_per_period', document.getElementById('billIncludedSegments').value.trim() || '0'],
+      ['sms_billing_currency', document.getElementById('billCurrency').value],
+    ];
+    const results = await Promise.all(pairs.map(([k,v]) => apiCall('/settings/' + k, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ value: v })
+    })));
+
+    if(results.every(r => r && r.ok)){
+      note.innerHTML = '<span style="color:var(--sage);">Saved. This rate applies to messages sent from now on — use Reprice for older ones.</span>';
+      loadBillingStatement();
+    } else {
+      note.innerHTML = '<span style="color:var(--brick);">Could not save the rate card.</span>';
+    }
+  }
+
+  async function closeBillingPeriod(){
+    const sel = document.getElementById('billPeriodSelect');
+    const period = sel.value;
+    const label = sel.selectedOptions[0].text;
+    const ref = prompt(
+      `Close ${label} and freeze its figures?\n\n` +
+      `After this the statement is served from the stored totals, so what the club has been told it owes stays what it owes. ` +
+      `Anything arriving later shows as drift rather than changing the figure.\n\n` +
+      `Invoice reference (optional):`, '');
+    if(ref === null) return;
+
+    const res = await apiCall('/billing/sms/close', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ period, invoice_ref: ref || null })
+    });
+    const notices = document.getElementById('billingNotices');
+    if(!res){ notices.innerHTML = billNotice('No backend connected.','bad'); return; }
+    const d = await res.json().catch(()=>({}));
+    if(!res.ok){ notices.innerHTML = billNotice(esc(d.error || 'Could not close the period.'), 'bad'); return; }
+    loadBillingStatement();
+    loadClosedPeriods();
+  }
+
+  async function repriceBilling(dryRun){
+    const period = document.getElementById('billPeriodSelect').value;
+    const out = document.getElementById('billRepriceResult');
+    out.innerHTML = '<span style="font-size:12px;color:var(--ink-soft);">Checking…</span>';
+
+    const res = await apiCall('/billing/sms/reprice', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ period, dry_run: dryRun })
+    });
+    if(!res){ out.innerHTML = '<span style="font-size:12px;color:var(--brick);">No backend connected.</span>'; return; }
+    const d = await res.json().catch(()=>({}));
+    if(!res.ok){ out.innerHTML = `<span style="font-size:12px;color:var(--brick);">${esc(d.error || 'Could not reprice.')}</span>`; return; }
+
+    if(!d.messages_repriced){
+      out.innerHTML = '<span style="font-size:12px;color:var(--ink-soft);">Nothing to reprice in this period — every message already carries its own meter reading.</span>';
+      return;
+    }
+
+    if(dryRun){
+      out.innerHTML = `<div style="font-size:12.5px;line-height:1.6;">
+        <b>${d.messages_repriced.toLocaleString()} message${d.messages_repriced===1?'':'s'}</b> in this period have no meter reading,
+        totalling <b>${d.segments_recovered.toLocaleString()} segments</b> — ${esc(billMoney(d.amount_cents,'USD'))} at the current rate.
+        <div style="color:var(--ink-soft);margin-top:6px;">${esc(d.caveat)}</div>
+        <button class="btn-primary" style="margin-top:10px;" onclick="repriceBilling(false)">Apply to ${d.messages_repriced.toLocaleString()} message${d.messages_repriced===1?'':'s'}</button>
+      </div>`;
+    } else {
+      out.innerHTML = `<span style="font-size:12.5px;color:var(--sage);">Repriced ${d.rows_updated.toLocaleString()} message${d.rows_updated===1?'':'s'}` +
+        `${(d.failures||[]).length ? ` — ${d.failures.length} could not be updated` : ''}.</span>`;
+      loadBillingStatement();
+    }
+  }
+
+  async function previewSmsCost(){
+    const body = document.getElementById('billPreviewBody').value;
+    const out = document.getElementById('billPreviewResult');
+    if(!body.trim()){ out.innerHTML = '<span style="font-size:12px;color:var(--ink-soft);">Paste some wording above first.</span>'; return; }
+
+    const recipients = parseInt(document.getElementById('billPreviewRecipients').value) || 0;
+    const res = await apiCall('/billing/sms/preview', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ body, recipients })
+    });
+    if(!res){ out.innerHTML = '<span style="font-size:12px;color:var(--brick);">No backend connected.</span>'; return; }
+    const d = await res.json().catch(()=>({}));
+    if(!res.ok){ out.innerHTML = `<span style="font-size:12px;color:var(--brick);">${esc(d.error||'Could not price that.')}</span>`; return; }
+
+    const bad = d.encoding === 'ucs2';
+    let html = `<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;">
+      <div><div class="metric-label">Segments</div><div class="metric-val" style="font-size:22px;color:${d.segments>1?'var(--brick)':'var(--ink)'};">${d.segments}</div></div>
+      <div><div class="metric-label">Encoding</div><div class="metric-val" style="color:${bad?'var(--brick)':'var(--ink)'};">${bad?'UCS-2':'GSM-7'}</div></div>
+      <div><div class="metric-label">Characters</div><div class="metric-val">${d.characters}</div></div>
+      <div><div class="metric-label">Headroom</div><div class="metric-val">${d.headroom}</div></div>
+      <div><div class="metric-label">Per recipient</div><div class="metric-val">${esc(d.cost_per_recipient)}</div></div>`;
+    if(d.projected_cost){
+      html += `<div><div class="metric-label">× ${recipients.toLocaleString()} recipients</div>
+        <div class="metric-val" style="font-size:22px;">${esc(d.projected_cost)}</div></div>`;
+    }
+    html += '</div>';
+
+    (d.warnings||[]).forEach(w=>{
+      html += `<div style="margin-top:12px;font-size:12px;line-height:1.55;padding:10px 12px;border-left:3px solid var(--brick);background:#FAFAF6;">${esc(w)}</div>`;
+    });
+    if(!d.rate_configured){
+      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--ink-soft);">Segment counts are exact; the money is zero because no rate is configured yet.</div>';
+    }
+    out.innerHTML = html;
+  }
+
+  // Prices every wording that actually goes out. This is the one that catches a
+  // problem before it becomes a bill — the golf survey used to sit at three
+  // segments because of a single em dash, and nothing in the product showed it.
+  async function loadLiveTemplatesIntoPreview(){
+    const out = document.getElementById('billPreviewResult');
+    out.innerHTML = '<span style="font-size:12px;color:var(--ink-soft);">Metering the live templates…</span>';
+    const res = await apiCall('/billing/sms/templates');
+    if(!res || !res.ok){ out.innerHTML = '<span style="font-size:12px;color:var(--brick);">Could not read the live templates.</span>'; return; }
+    const d = await res.json();
+
+    let html = '<table class="data-table"><tr><th>Template</th><th>Chars</th><th>Encoding</th><th>Segments</th><th>Headroom</th><th>Per recipient</th></tr>';
+    d.templates.forEach(t=>{
+      const bad = t.avoidable_segments > 0;
+      html += `<tr><td><b>${esc(t.label)}</b>` +
+        (bad ? `<div style="font-size:10.5px;color:var(--brick);">${t.avoidable_segments} avoidable segment${t.avoidable_segments===1?'':'s'} — ${esc(t.non_gsm_characters.map(c=>c.character+' ('+c.code_point+')').join(', '))}</div>` : '') +
+        (t.tight ? `<div style="font-size:10.5px;color:var(--ink-soft);">Only ${t.headroom} character${t.headroom===1?'':'s'} spare before this costs double.</div>` : '') +
+        `</td><td>${t.characters}</td>` +
+        `<td style="color:${t.encoding==='ucs2'?'var(--brick)':'inherit'};">${t.encoding==='gsm7'?'GSM-7':'UCS-2'}</td>` +
+        `<td style="color:${t.segments>1?'var(--brick)':'inherit'};"><b>${t.segments}</b></td>` +
+        `<td>${t.headroom}</td><td>${esc(t.cost_per_recipient)}</td></tr>`;
+    });
+    html += '</table>';
+    if(!d.rate_configured) html += '<div style="margin-top:10px;font-size:11.5px;color:var(--ink-soft);">Segment counts are exact; prices are zero until a rate is configured.</div>';
+    out.innerHTML = html;
+  }
+
+  async function loadClosedPeriods(){
+    const table = document.getElementById('billPeriodsTable');
+    const res = await apiCall('/billing/sms/periods');
+    const head = '<tr><th>Period</th><th>Sent</th><th>Segments</th><th>Charged</th><th>Amount</th><th>Invoice</th><th>Closed by</th><th></th></tr>';
+    if(!res || !res.ok){
+      const err = res ? await res.json().catch(()=>({})) : {};
+      table.innerHTML = head + `<tr><td colspan="8" style="color:var(--ink-soft);padding:16px 0;">${esc(err.error || 'Could not load closed periods.')}</td></tr>`;
+      return;
+    }
+    const d = await res.json();
+    let html = head;
+    if(!(d.periods||[]).length){
+      html += '<tr><td colspan="8" style="color:var(--ink-soft);padding:16px 0;">Nothing closed yet. Close a finished month to freeze its figures for invoicing.</td></tr>';
+    }
+    (d.periods||[]).forEach(p=>{
+      const voided = p.status === 'void';
+      html += `<tr style="${voided?'opacity:0.45;':''}">
+        <td><b>${esc(p.period)}</b>${voided?' <span class="badge critical">Void</span>':''}</td>
+        <td>${(p.messages_sent||0).toLocaleString()}</td>
+        <td>${(p.segments_sent||0).toLocaleString()}</td>
+        <td>${(p.segments_charged||0).toLocaleString()}</td>
+        <td><b>${esc(billMoney(p.amount_cents, p.currency))}</b></td>
+        <td>${esc(p.invoice_ref || '—')}</td>
+        <td style="font-size:11.5px;color:var(--ink-soft);">${esc(p.closed_by_email || '—')}</td>
+        <td>${voided ? '' : `<button class="btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="voidBillingPeriod('${jsAttr(p.period_id)}','${jsAttr(p.period)}')">Void</button>`}</td>
+      </tr>`;
+    });
+    table.innerHTML = html;
+  }
+
+  async function voidBillingPeriod(periodId, label){
+    const reason = prompt(
+      `Void the closed period ${label}?\n\n` +
+      `This reopens a month that has probably already been invoiced. It is recorded in the audit trail against your account.\n\n` +
+      `Reason:`, '');
+    if(reason === null) return;
+    if(!reason.trim()){ alert('A reason is required to void a closed period.'); return; }
+
+    const res = await apiCall('/billing/sms/periods/' + encodeURIComponent(periodId) + '/void', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reason })
+    });
+    if(res && res.ok){ loadClosedPeriods(); loadBillingStatement(); }
+    else { const d = res ? await res.json().catch(()=>({})) : {}; alert(d.error || 'Could not void that period.'); }
+  }
+
   async function loadClubSettings(){
     const res = await apiCall('/settings');
     if(!res || !res.ok) return;

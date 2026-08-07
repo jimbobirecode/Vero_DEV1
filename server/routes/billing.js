@@ -405,4 +405,65 @@ router.post("/sms/preview", async (req, res) => {
   }
 });
 
+// GET /api/billing/sms/templates
+//
+// Every wording that actually goes out, metered.
+//
+// The statement says what a period cost; this says what the next one will cost
+// and why, which is the only view that lets someone act before the money is
+// spent. Built from the same helpers the sender uses, so a template cannot be
+// shown here as cheap and sent as expensive.
+router.get("/sms/templates", async (req, res) => {
+  const { smsBody, staffSmsBody, sampleLink, staffSampleLink } = require("../lib/messages");
+
+  try {
+    const settings = await loadSettings();
+    const card = B.rateCard(settings);
+    const link = sampleLink(process.env.SURVEY_BASE_URL);
+
+    const bodies = [
+      { key: "food_bev", label: "Food & beverage survey", body: smsBody({ surveyType: "food_bev", link }) },
+      { key: "golf", label: "Golf survey", body: smsBody({ surveyType: "golf", link }) },
+      { key: "events", label: "Events survey", body: smsBody({ surveyType: "events", link }) },
+      {
+        key: "staff",
+        label: "Staff shift survey",
+        body: staffSmsBody({ link: staffSampleLink(process.env.SURVEY_BASE_URL), firstName: "Jessica" }),
+      },
+    ];
+
+    const templates = bodies.map((t) => {
+      const m = B.meter(t.body);
+      const priced = B.priceMessage(m, card);
+      const offenders = B.offendingCharacters(t.body);
+
+      // What the same message would cost with its non-GSM characters replaced.
+      // Showing the gap rather than only the total is what makes the fix
+      // obvious: "3 segments" is a number, "3 instead of 1" is an instruction.
+      const asciiSegments = B.meter(t.body.replace(/[^\x00-\x7F]/g, "-")).segments;
+
+      return {
+        key: t.key,
+        label: t.label,
+        body: t.body,
+        characters: [...t.body].length,
+        encoding: m.encoding,
+        segments: m.segments,
+        headroom: m.headroom,
+        avoidable_segments: Math.max(0, m.segments - asciiSegments),
+        non_gsm_characters: offenders,
+        cost_per_recipient: B.formatMoney(B.toCents(priced.billable_cents), card.currency),
+        cost_per_recipient_cents: priced.billable_cents,
+        // Thin headroom is not a problem today and is a problem the moment the
+        // club is renamed or the survey link gets longer.
+        tight: m.segments === 1 && m.headroom <= 10,
+      };
+    });
+
+    res.json({ templates, rate_configured: card.configured, currency: card.currency });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 module.exports = router;
