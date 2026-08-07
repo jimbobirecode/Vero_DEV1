@@ -14,6 +14,7 @@ const credit = require("../lib/sms-credit");
 const store = require("../lib/sms-credit-store");
 const stripeLib = require("../lib/stripe");
 const { CLUB_NAME, CLUB_UUID, CLUB_ID_INVALID, RAW_CLUB_ID } = require("../lib/club-config");
+const { returnUrl, baseUrlMismatch } = require("../lib/base-url");
 
 const CLUB_ID = CLUB_UUID;
 
@@ -51,11 +52,12 @@ function setupError(result) {
   }
 }
 
-function baseUrl(req) {
-  const configured = process.env.SURVEY_BASE_URL;
-  if (configured) return configured.replace(/\/+$/, "");
-  return `${req.protocol}://${req.get("host")}`;
-}
+// Stripe sends the club back here after Checkout, so this must be the origin
+// their browser is actually on — not SURVEY_BASE_URL, which is for links that
+// travel in a message and on this deployment still held the Render hostname
+// while the app is served from a custom domain. Checkout duly returned everyone
+// to a URL that 404s. See lib/base-url.js.
+const baseUrl = returnUrl;
 
 // GET /api/credit — balance, state, and what it buys.
 router.get("/", async (req, res) => {
@@ -77,6 +79,14 @@ router.get("/", async (req, res) => {
     if (CLUB_ID_INVALID) {
       setup = { reason: "club_id_not_uuid", detail: RAW_CLUB_ID, previous: setup.reason };
     }
+
+    // SURVEY_BASE_URL naming a different host than the one being served is
+    // reported here because this is the screen where someone will notice it —
+    // but it matters far more elsewhere. Every survey link in every SMS and
+    // email is built from that value, so a stale hostname means members tap a
+    // link that goes nowhere, and nothing else in the product would say so:
+    // the send succeeds and only the member's tap fails.
+    const mismatch = baseUrlMismatch(req);
 
     const card = account?.stripe_payment_method_id
       ? await stripeLib.describeCard(account.stripe_payment_method_id)
@@ -103,6 +113,7 @@ router.get("/", async (req, res) => {
       },
 
       setup,
+      base_url_mismatch: mismatch,
       stripe_ready: stripeLib.isConfigured(),
       // Surfaced rather than hidden: with no rate set every message costs zero,
       // so the balance never moves and the hard stop never engages. That is a
