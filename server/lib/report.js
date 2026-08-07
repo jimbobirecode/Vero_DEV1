@@ -10,10 +10,18 @@
 // Pure. Everything arrives as arguments and leaves as a plain object, so the
 // whole model can be tested without a database, a spreadsheet or a PDF.
 
+// Uppercase, and the same labels lib/scoring.js uses.
+//
+// These were lowercase here at first, which silently emptied the whole indices
+// section: aggregate() keys its output CHI/SSI/OHI, so overall["chi"] was always
+// undefined and every index got filtered out as "not fed". The unit test did not
+// catch it because the fixture had been written to match this file rather than
+// to match what /api/scores actually returns — a fixture invented from the
+// consumer's assumptions tests the assumption, not the contract.
 const INDEX_LABELS = {
-  chi: "Club Health Index",
-  ssi: "Service Standards Index",
-  ohi: "Operational Health Index",
+  CHI: "Club Health Index",
+  SSI: "Service Satisfaction Index",
+  OHI: "Operational Health Index",
 };
 
 function round(n, dp = 1) {
@@ -96,8 +104,13 @@ function build({
   ].map((h) => ({ ...h, delta: delta(h.value, h.previous, h.format === "rating" ? 2 : h.format === "number" ? 0 : 1) }));
 
   // The three club indices, when the templates feed them.
-  const indices = Object.entries(INDEX_LABELS).map(([key, label]) => ({
-    key, label,
+  //
+  // Labels come from the scores payload when it carries them, so the report
+  // cannot drift from what the dashboard calls the same index.
+  const labels = scores?.labels || INDEX_LABELS;
+  const indices = Object.keys(INDEX_LABELS).map((key) => ({
+    key,
+    label: labels[key] || INDEX_LABELS[key],
     value: round(overall[key], 1),
     previous: round(prev[key], 1),
     delta: delta(round(overall[key], 1), round(prev[key], 1), 1),

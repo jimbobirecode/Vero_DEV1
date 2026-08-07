@@ -22,7 +22,7 @@ const TO = "2026-08-01T00:00:00.000Z";
 
 const SCORES = {
   response_count: 412,
-  overall: { nps: 54.4, csat: 4.37, chi: 82.1, ssi: 79.4, ohi: 71.2 },
+  overall: { nps: 54.4, csat: 4.37, CHI: 82.1, SSI: 79.4, OHI: 71.2 },
   by_outlet: [
     { outlet: "Belmont Dining Room", response_count: 210, nps: 58.2, csat: 4.4, food: 4.3, service: 4.5 },
     { outlet: "Golf Patio", response_count: 202, nps: 50.1, csat: 4.3, food: 4.2, service: 4.4 },
@@ -32,7 +32,7 @@ const SCORES = {
   ],
 };
 
-const PREVIOUS = { response_count: 388, overall: { nps: 49.1, csat: 4.21, chi: 79.8, ssi: 78.0, ohi: 70.4 } };
+const PREVIOUS = { response_count: 388, overall: { nps: 49.1, csat: 4.21, CHI: 79.8, SSI: 78.0, OHI: 70.4 } };
 
 const model = () => R.build({
   clubName: "Aronimink Golf Club", from: FROM, to: TO,
@@ -81,7 +81,15 @@ check("and carries its change", m.headline[0].delta.label, "+5");
 check("CSAT keeps two places, because a hundredth is a real movement", m.headline[1].value, 4.37);
 check("the response rate is computed from sends", m.headline[3].value, 45.8);
 
-check("all three indices appear when they are fed", m.indices.map((i) => i.key), ["chi", "ssi", "ohi"]);
+// Uppercase, exactly as lib/scoring.js emits them. Reading these lowercase
+// silently emptied the section, and a fixture written to match the reader
+// rather than the producer let it through.
+check("all three indices appear when they are fed", m.indices.map((i) => i.key), ["CHI", "SSI", "OHI"]);
+check("and are labelled the way the rest of the app labels them",
+  m.indices[1].label, "Service Satisfaction Index");
+// Guards the exact regression: lowercase keys must not resolve.
+check("lowercase index keys are not read",
+  R.build({ from: FROM, to: TO, scores: { overall: { chi: 80, ssi: 80, ohi: 80 } } }).indices.length, 0);
 check("an index carries its change", m.indices[0].delta.label, "+2.3");
 
 check("outlets come through", m.outlets.length, 2);
