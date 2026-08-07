@@ -49,6 +49,20 @@ services:
       # sends, but as plain text rather than the branded template.
       - key: SENDGRID_TEMPLATE_ID
         sync: false
+      # Stripe, for prepaid SMS credit top-ups. Both are required to take
+      # payment: the secret key creates the Checkout session, and the webhook
+      # secret is what proves a payment actually happened. Without the second
+      # one every webhook is rejected and a club can pay without being credited,
+      # so do not set one without the other.
+      #
+      # The webhook endpoint is https://<this-service>/api/stripe/webhook and
+      # must be subscribed to checkout.session.completed,
+      # payment_intent.succeeded, payment_intent.payment_failed and
+      # charge.refunded.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
 
   # Daily: enforce the 12-month audit log retention policy.
   - type: cron

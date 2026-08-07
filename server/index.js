@@ -26,6 +26,15 @@ app.use(cors({
   credentials: false,
 }));
 
+// Stripe's webhook, mounted before express.json() and with the raw body.
+//
+// The signature Stripe sends is computed over the exact bytes it posted. Parsing
+// them into an object and re-serialising produces a different byte sequence, so
+// verification fails and every payment is refused — which is why this cannot sit
+// with the other routes below. It is public by necessity; the signature is the
+// authentication. See routes/stripe-webhook.js.
+app.use("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), require("./routes/stripe-webhook"));
+
 app.use(express.json({ limit: "5mb" })); // 5mb headroom for CSV member imports posted as JSON
 
 // Blanket ceiling on the API. Deliberately generous — it is a backstop
@@ -154,10 +163,9 @@ app.use("/api/scores",       requireAuth, minimumRole("dept_head"),       requir
 // defeat the point, so this sits at the same level as the audit trail.
 app.use("/api/staff-surveys", requireAuth, minimumRole("general_manager"), require("./routes/staff-surveys"));
 // The audit trail is itself sensitive — it names who accessed what.
-// What the club is charged for its SMS. Money, not operations: closing a period
-// fixes an invoice and repricing rewrites what messages cost, so this sits at
-// the same level as club configuration rather than with the reporting screens.
-app.use("/api/billing",      requireAuth, minimumRole("general_manager"), require("./routes/billing"));
+// SMS credit — the balance, buying more, and what it was spent on. Money, so
+// it sits at the same level as club configuration rather than with reporting.
+app.use("/api/credit",       requireAuth, minimumRole("general_manager"), require("./routes/credit"));
 app.use("/api/audit",        requireAuth, minimumRole("general_manager"), require("./routes/audit"));
 app.use("/api/diagnostics",  requireAuth, minimumRole("general_manager"), require("./routes/diagnostics"));
 

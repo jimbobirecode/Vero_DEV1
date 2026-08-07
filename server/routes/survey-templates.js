@@ -4,7 +4,7 @@ const { supabase } = require("../lib/supabase");
 
 const { isIndex, INDEXES } = require("../lib/scoring");
 const { smsBody, emailSubject, sampleLink, staffSmsBody, staffEmailSubject, staffSampleLink } = require("../lib/messages");
-const { meter: smsMeter, offendingCharacters } = require("../lib/sms-billing");
+const { meter: smsMeter } = require("../lib/sms-billing");
 
 // "staff" is the shift survey sent to your own team. It lives here with the
 // rest so the Builder is the one place any survey's wording is seen and
@@ -101,10 +101,10 @@ router.get("/preview/:id", async (req, res) => {
       // Metered properly rather than by length/160, which this used to do and
       // which was wrong in the direction that costs money: it ignores encoding
       // entirely, so the golf survey — one em dash, therefore UCS-2, therefore
-      // three segments — reported as one. See lib/sms-billing.js.
+      // three segments — reported as one. The count is what matters here, since
+      // a segment is what the club's credit is debited for; the encoding behind
+      // it stays in lib/sms-billing.js.
       sms_segments: smsMeter(sms).segments,
-      sms_encoding: smsMeter(sms).encoding,
-      sms_non_gsm: offendingCharacters(sms),
       email_subject: isStaff ? staffEmailSubject() : emailSubject({ surveyType: tpl.survey_type }),
       sample_link: link,
     },

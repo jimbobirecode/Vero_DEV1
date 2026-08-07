@@ -25,13 +25,12 @@ const ACTIONS = {
   SURVEY_SENT: "survey_sent",
   SETTINGS_CHANGED: "settings_changed",
   LOGIN: "login",
-  // Back charging. Closing a period fixes what a club owes and voiding one
-  // reopens an invoice that has probably already been sent, so both belong in
-  // the same trail as role changes rather than in a server log nobody reads.
-  SMS_STATEMENT_VIEWED: "sms_statement_viewed",
-  SMS_PERIOD_CLOSED: "sms_period_closed",
-  SMS_PERIOD_VOIDED: "sms_period_voided",
-  SMS_REPRICED: "sms_repriced",
+  // SMS credit. A manual adjustment moves money without Stripe having anything
+  // to say about it, so it belongs in the same trail as role changes rather
+  // than in a server log nobody reads.
+  SMS_TOPUP_STARTED: "sms_topup_started",
+  SMS_CREDIT_ADJUSTED: "sms_credit_adjusted",
+  SMS_CREDIT_SETTINGS_CHANGED: "sms_credit_settings_changed",
 };
 
 function clientIp(req) {

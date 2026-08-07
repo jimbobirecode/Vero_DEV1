@@ -1,7 +1,7 @@
 {
   "name": "vero-server",
   "version": "1.0.0",
-  "description": "Vero backend \u2014 Express app deployed on Render, using Supabase as the database (Postgres + Vault for secrets).",
+  "description": "Vero backend — Express app deployed on Render, using Supabase as the database (Postgres + Vault for secrets).",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -17,7 +17,8 @@
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "multer": "^2.2.0",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "stripe": "^22.4.0"
   },
   "overrides": {
     "brace-expansion": "^5.0.9",

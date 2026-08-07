@@ -444,6 +444,14 @@ router.post("/:id/send-surveys", async (req, res) => {
       }
       result.sent++;
     } catch (e) {
+      // An empty balance stops the blast rather than repeating itself for
+      // every remaining attendee. Their survey_sent_at is untouched, so a
+      // re-run after topping up picks up exactly who was missed.
+      if (e?.code === "insufficient_credit") {
+        result.stopped_for_credit = true;
+        result.errors.push(`Stopped: ${e.message} Remaining attendees were not sent a survey — re-run this blast once credit is available.`);
+        break;
+      }
       result.errors.push(`${displayId}: ${String(e)}`);
     }
   }

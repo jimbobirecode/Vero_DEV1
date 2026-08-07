@@ -33,7 +33,7 @@ Tested: the server boots cleanly, serves both the dashboard and survey pages, an
 | `package.json` / `.env.example` | Node dependencies and the env vars the server expects. |
 | `schema.sql` | Postgres schema for Supabase: members, outlets (real Aronimink thresholds), visits, survey_responses, training_plans, case_alerts, club_integrations. |
 | `vault_setup.sql` | One-time SQL to enable the Vault helper function credentials are stored through. |
-| `migrations/sms-back-charge.sql` | **Billing clubs for the SMS they send.** Adds per-segment meter readings to `message_log` and a frozen-period table. See `docs/sms-back-charging.md`. |
+| `migrations/sms-credit.sql` | **Prepaid SMS credit.** The balance, the ledger, and the atomic debit that stops sending at zero. See `docs/sms-credit.md`. |
 | `parse_pos_report.py` | Real, tested parser for Aronimink's actual POS export format. |
 | `edge-functions/` | The original Supabase Edge Function versions — kept as reference only. Not used in the Render deployment; logic is identical to `server/`, just Deno-flavored. |
 
@@ -83,29 +83,36 @@ Two things were added directly to the dashboard:
 
 To make this real: point the dashboard's Save/Test buttons at `save_integrations.ts` and `import_members.ts` instead of their current in-page simulation, and run the one-time SQL in the comment at the bottom of `save_integrations.ts` to create the Vault helper function.
 
-## Back charging clubs for SMS (new)
+## Prepaid SMS credit (new)
 
-Vero pays the carrier for every text it sends; this is how that cost gets billed back to the club that caused it. Full detail in **`docs/sms-back-charging.md`** — the short version:
+The club buys message credit up front through Stripe, every text spends it, and at zero, text sending stops until they top up. Full detail in **`docs/sms-credit.md`** — the short version:
 
-**Carriers bill per segment, not per message**, and a segment is 160 characters only while every character is in the GSM-7 alphabet. One character that isn't — an em dash, a curly apostrophe, an emoji — re-encodes the whole message as UCS-2, where a segment holds 70 characters instead of 160.
-
-**This was already costing real money.** The golf survey template contained a single em dash (`—`), which made every golf survey cost **three segments instead of one**. Nothing in the product would have shown that until the carrier bill arrived. It's now a hyphen, and `sms-billing.test.js` asserts the segment cost of every outgoing template so a reword can't reintroduce it silently. The same character was in the event survey; also fixed.
+**Dashboard → Setup → SMS Credit.** Balance, what it roughly buys, top up, automatic top-up, payment history, and what credit was spent on by day and message type. General Manager only, matching the server's gate.
 
 What was built:
 
-- **`server/lib/sms-billing.js`** — the meter. Pure functions: GSM-7 vs UCS-2 detection, proper segment counting (including the cases that quietly cost money — extension characters that take two septets, escape pairs that can't straddle a segment boundary, emoji that are two UCS-2 units), and pricing against a configurable rate card. No database, no network, so an invoice is reproducible six months later.
-- **`migrations/sms-back-charge.sql`** — stores each message's segments, encoding, and the unit price **in force when it was sent**. Snapshotted, not referenced: change the rate in September and August's invoice still adds up to what August's invoice said.
-- **`server/routes/billing.js`** — statement for a period, close a month (freezing what was invoiced), void, reprice historical rows, and a **cost preview** that prices a wording before it goes to the whole membership.
-- **Dashboard → Setup → SMS Billing** — the screen. KPIs, the statement with breakdowns by message type and encoding, the cost preview, the rate card, and closed periods. General Manager only, matching the server's gate.
+- **`migrations/sms-credit.sql`** — the account, the ledger, and the two Postgres functions that are the only things allowed to move a balance. Also adds the per-message meter readings to `message_log`.
+- **`server/lib/sms-credit.js`** — the rules, pure and exhaustively tested: what a message costs, whether there is enough to send it, when to warn, when to top up automatically.
+- **`server/lib/stripe.js`** — Checkout for manual top-ups, off-session charges for automatic ones. Card details never touch this server, which is what keeps the deployment out of PCI scope.
+- **`server/routes/credit.js`** and **`server/routes/stripe-webhook.js`** — the API, and the webhook that is the *only* thing which grants credit.
 
-The Survey Builder's segment count was wrong too, and is fixed: it used `Math.ceil(length / 160)`, which ignores encoding, so the golf survey displayed as one segment while genuinely costing three.
+Four properties this had to get right, because each one is a way to lose or invent money:
 
-Two design decisions worth stating plainly, because both look like omissions:
+- **The debit is atomic.** `debit_sms_credit()` decrements with `balance_cents >= amount` inside the `WHERE`, so the check and the deduction are one statement against one locked row. Reading a balance in Node and writing it back would let two concurrent sends spend the same last cent — silently, under exactly the load a nightly batch creates. There's a test that races two sends at a one-message balance and asserts exactly one wins.
+- **A payment is only real when Stripe says so.** Credit is granted by the webhook, never by the browser returning to a success URL — a redirect proves nothing, and trusting it would let anyone with the link credit themselves. The webhook verifies Stripe's signature over the raw request body, which is why it's mounted with `express.raw()` ahead of the JSON parser.
+- **Stripe retries, so every write is idempotent.** Retries can arrive for days. Each credit goes through a key derived from the payment intent, with a unique index making a double-credit impossible rather than unlikely.
+- **A message that doesn't send isn't charged.** The debit happens before the carrier call so the hard stop is real; if the send then fails, the debit is reversed as its own ledger entry rather than deleted. A club querying its balance is owed the sequence of events, not a tidied version.
 
-- **There is no default SMS rate.** It ships at `0` and the statement says so in as many words. A plausible-looking invented price produces invoices that look right and aren't, which is far harder to catch than an obviously missing number. Metering runs from day one regardless — set `sms_rate_cents_per_segment` to the real Sendly price and `/api/billing/sms/reprice` applies it to everything already logged.
-- **Failed sends are never charged.** They sit in the same table as successes and look identical to a `COUNT(*)`, which is the single likeliest way a system like this overbills. They're counted and reported at zero so a club can see what it *isn't* being billed for.
+Two defaults that look like omissions and aren't:
 
-Still needed to go live: the actual per-segment price from Sendly. Everything else is in place and tested (110 tests across the two suites).
+- **No default per-message price.** Ships at `0`, and the screen says so plainly. An invented price drains a balance at a fictional rate, and a plausible wrong number is far harder to notice than an obviously missing one.
+- **Enforcement is off until switched on.** `sms_credit_enabled` defaults to `false`, so running the migration meters and records without blocking. A deployment upgrading into this must not suddenly stop sending surveys because nobody has bought credit yet.
+
+Running out is designed to be recoverable rather than surprising: warnings at two thresholds, automatic top-up against a saved card, and a batch that hits zero stops immediately rather than grinding through 800 more identical failures — leaving those members untouched so the next run picks them up.
+
+**Along the way this found a live bug.** Carriers bill per *segment*, and a segment is 160 characters only while every character is in the GSM-7 alphabet. The golf survey template contained a single em dash (`—`), which forced UCS-2 — 70 characters per segment — making every golf survey cost **three segments instead of one**. Nothing in the product would have shown it until the bill arrived. It's now a hyphen, the event survey had the same character, and `sms-billing.test.js` asserts the segment cost of every outgoing template so a reword can't reintroduce it. The Survey Builder's own count was wrong too — `Math.ceil(length / 160)`, which ignores encoding entirely — and now uses the real meter.
+
+Still needed to go live: the per-segment price from Sendly, and a Stripe account with `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` set. Everything else is in place and tested.
 
 ## Not yet built
 

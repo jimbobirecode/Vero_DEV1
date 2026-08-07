@@ -259,6 +259,19 @@ async function performSend(linkBase) {
       }
       results.sent++;
     } catch (e) {
+      // An empty balance stops the batch rather than repeating itself for every
+      // remaining recipient. Grinding on would produce hundreds of identical
+      // errors, and — worse — would mark nobody as sent while looking like a
+      // delivery fault rather than a billing one.
+      if (e?.code === "insufficient_credit") {
+        const notSent = capResult.send.length - capResult.send.indexOf(visit);
+        results.stopped_for_credit = true;
+        results.errors.push(
+          `Stopped: ${e.message} ${notSent} member(s) were not sent a survey. ` +
+          `Their visits are untouched, so the next run picks them up once credit is available.`
+        );
+        break;
+      }
       results.errors.push(String(e));
     }
   }
