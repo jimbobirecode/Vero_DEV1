@@ -96,6 +96,9 @@ What was built:
 - **`server/lib/sms-billing.js`** — the meter. Pure functions: GSM-7 vs UCS-2 detection, proper segment counting (including the cases that quietly cost money — extension characters that take two septets, escape pairs that can't straddle a segment boundary, emoji that are two UCS-2 units), and pricing against a configurable rate card. No database, no network, so an invoice is reproducible six months later.
 - **`migrations/sms-back-charge.sql`** — stores each message's segments, encoding, and the unit price **in force when it was sent**. Snapshotted, not referenced: change the rate in September and August's invoice still adds up to what August's invoice said.
 - **`server/routes/billing.js`** — statement for a period, close a month (freezing what was invoiced), void, reprice historical rows, and a **cost preview** that prices a wording before it goes to the whole membership.
+- **Dashboard → Setup → SMS Billing** — the screen. KPIs, the statement with breakdowns by message type and encoding, the cost preview, the rate card, and closed periods. General Manager only, matching the server's gate.
+
+The Survey Builder's segment count was wrong too, and is fixed: it used `Math.ceil(length / 160)`, which ignores encoding, so the golf survey displayed as one segment while genuinely costing three.
 
 Two design decisions worth stating plainly, because both look like omissions:
 

@@ -200,6 +200,24 @@ const call = async (method, path, body) => {
   r = await call("POST", "/api/billing/sms/preview", {});
   check("a preview with no body is refused", r.status, 400);
 
+  // ------------------------------------------------- the live templates ----
+  // Built from the same helpers the sender uses, so a template cannot be shown
+  // here as cheap and sent as expensive.
+  r = await call("GET", "/api/billing/sms/templates");
+  check("every outgoing template is metered", r.body.templates.length, 4);
+  check("they are named for a human", r.body.templates.map((t) => t.key),
+    ["food_bev", "golf", "events", "staff"]);
+  check("none of them currently costs an avoidable segment",
+    r.body.templates.filter((t) => t.avoidable_segments > 0), []);
+  check("the golf survey is one segment now the em dash is gone",
+    r.body.templates.find((t) => t.key === "golf").segments, 1);
+  check("the staff survey is honestly reported as two",
+    r.body.templates.find((t) => t.key === "staff").segments, 2);
+  // The food & beverage survey sits 5 characters under the limit. That is not a
+  // problem today and becomes one the moment the club is renamed.
+  check("a template close to the limit is flagged as tight",
+    r.body.templates.find((t) => t.key === "food_bev").tight, true);
+
   server.close();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

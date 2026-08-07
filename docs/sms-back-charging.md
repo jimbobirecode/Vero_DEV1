@@ -70,6 +70,21 @@ curl -X POST /api/billing/sms/reprice -d '{"period":"2026-07","dry_run":false}'
 
 Segment counts recovered this way are **exact** — recomputed from the stored message body. Prices are **not**: they use today's rate card, which may not be what was in force when those messages went out. The response says so; don't strip that caveat when passing figures to a club.
 
+## The screen
+
+**Dashboard → Setup → SMS Billing.** General Manager and Super Admin only, matching the server's own gate — the API refuses anything below `general_manager` regardless, but the nav hides it too so a director never clicks into a screen that 403s.
+
+Top to bottom:
+
+- **Notices** — anything needing a decision, above the figures rather than beneath them. No rate configured, UCS-2 spend that could be removed, drift on a closed period.
+- **Four KPIs** — segments sent, chargeable after allowance, amount, and whether the period is open or frozen. Failed sends appear here as *"11 failed, not billed"* rather than being silently dropped.
+- **Statement** — month picker, `Close & invoice`, and two breakdowns: what the spend went on (nightly surveys, staff shift surveys, event surveys…) and how it was encoded, with UCS-2 marked *avoidable*.
+- **Cost preview** — paste any wording, set a recipient count, get segments and projected cost. `Check the live templates` meters every wording that actually goes out. Deliberately placed above the rate card: the cheapest fix for an SMS bill is wording that fits in one segment, not a renegotiated rate.
+- **Rate card** — carrier rate, markup, included allowance, currency, and `Reprice older messages`, which previews before it applies.
+- **Closed periods** — what was invoiced, by whom, against which reference, with `Void` behind a required reason.
+
+The Survey Builder's per-template segment count was also wrong and is fixed. It used `Math.ceil(length / 160)`, which ignores encoding entirely — so the golf survey, which was genuinely costing three segments, displayed as one. It now uses the same meter as everything else and shows the encoding and any non-GSM characters alongside.
+
 ## The endpoints
 
 All require `general_manager` or above — this is money, not reporting.
@@ -152,7 +167,9 @@ For a genuinely shared deployment, two things still need doing: scope `loadSetti
 
 ```bash
 node server/lib/sms-billing.test.js    # 72 — metering, pricing, statement arithmetic
-node server/routes/billing.test.js     # 38 — endpoints, closing, pagination, preview
+node server/routes/billing.test.js     # 44 — endpoints, closing, pagination, preview, templates
 ```
+
+The Billing screen itself was checked in a real browser (Chromium via Playwright) against stubbed API responses: the nav item appears, the screen renders every panel, the preview prices a wording and names the offending character, and the role gate matches the server's — F&B Director, Department Head and both Shift Manager roles cannot reach it. That harness lives outside the repo since Playwright isn't a project dependency; re-run it by driving `vero-dashboard.html` with `/api/**` intercepted.
 
 The metering tests are worth reading before changing anything in `lib/sms-billing.js`. They cover the cases that quietly cost money: extension characters that take two septets, escape pairs that can't be split across a segment boundary, emoji that are one code point but two UCS-2 units, and the 153/67 multipart capacities that make a 161-character message cost two segments rather than one and a bit.
