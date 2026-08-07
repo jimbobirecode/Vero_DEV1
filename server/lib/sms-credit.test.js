@@ -17,6 +17,28 @@ const acct = (over = {}) => ({
   stripe_customer_id: null, stripe_payment_method_id: null, topup_in_flight_at: null, ...over,
 });
 
+// ------------------------------------------------------- the live rate card --
+// The confirmed price is $0.02 per segment with no margin, and the setting is
+// denominated in cents — so the stored value is 2, not 0.02. That distinction
+// is a factor of 100 in Vero's favour or the club's, and nothing else in the
+// system would notice, so it is pinned here against the real figures.
+
+const LIVE = { sms_rate_cents_per_segment: "2", sms_markup_pct: "0" };
+
+check("a one-segment message costs two cents",
+  C.costOf("Club: how was your visit? https://x", LIVE).cost_cents, 2);
+check("which reads as $0.02", C.formatMoney(C.costOf("x", LIVE).cost_cents), "$0.02");
+check("a two-segment message costs four", C.costOf("a".repeat(200), LIVE).cost_cents, 4);
+check("a thousand one-segment messages cost $20.00",
+  C.formatMoney(C.costOf("x", LIVE).cost_cents * 1000), "$20.00");
+check("no margin is applied on top",
+  C.costOf("x", LIVE).unit_price_cents, 2);
+// $50 of credit at 2c a segment is 2,500 single-segment messages.
+check("fifty dollars of credit buys 2,500 messages", C.messagesRemaining(5000, LIVE), 2500);
+// The 100x error, stated explicitly so the wrong reading is visibly wrong.
+check("0.02 would be two hundredths of a cent, not two cents",
+  C.formatMoney(C.costOf("x", { sms_rate_cents_per_segment: "0.02" }).cost_cents * 1000), "$0.20");
+
 // ------------------------------------------------------------ what it costs --
 
 check("a one-segment message costs one segment's worth",

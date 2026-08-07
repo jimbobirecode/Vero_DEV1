@@ -6,14 +6,29 @@ The club buys message credit up front through Stripe. Every text spends it. At z
 
 1. Run `migrations/sms-credit.sql` in the Supabase SQL editor. This is the only SMS billing migration — it adds the per-message meter columns, the credit account, the ledger, and the two Postgres functions that move money.
 
-2. Set the price. Both are server-side settings, not club-facing — this is Vero's pricing, not something the club adjusts:
+2. **The price is $0.02 per segment, no margin.** The migration seeds this, so there is nothing to do on a fresh database.
 
-   ```bash
-   PUT /api/settings/sms_rate_cents_per_segment   { "value": "0.79" }   # $0.0079/segment
-   PUT /api/settings/sms_markup_pct               { "value": "0" }      # your margin, kept separate
+   The setting is denominated in **cents**, so the stored value is `2`:
+
+   | Setting | Value | Means |
+   |---|---|---|
+   | `sms_rate_cents_per_segment` | `2` | $0.02 per segment — 1,000 messages = $20.00 |
+   | `sms_markup_pct` | `0` | No margin; the club pays the rate exactly |
+
+   Getting the unit wrong is the one expensive mistake here: `0.02` would be two *hundredths* of a cent and undercharge by 100×. `sms-credit.test.js` asserts the arithmetic so it cannot drift.
+
+   **If these rows already exist**, the migration's `ON CONFLICT DO NOTHING` will not overwrite them. Set the price explicitly:
+
+   ```sql
+   update club_settings set value = '2' where key = 'sms_rate_cents_per_segment';
+   update club_settings set value = '0' where key = 'sms_markup_pct';
    ```
 
-   **There is deliberately no default.** It ships at `0`, and the credit screen says so in as many words. An invented price drains a balance at a fictional rate, and a plausible wrong number is far harder to notice than an obviously missing one. At zero, nothing is deducted and the hard stop can never engage.
+   Or over the API: `PUT /api/settings/sms_rate_cents_per_segment` with `{ "value": "2" }`.
+
+   These are server-side settings, not club-facing — this is Vero's pricing, not something the club adjusts.
+
+   The *code* still falls back to `0` when the setting is absent (see `rateCard()` in `lib/sms-billing.js`). That is deliberate: a missing setting must read as obviously unconfigured rather than silently falling back to a price nobody chose. At zero, nothing is deducted and the credit screen says so plainly.
 
 3. Configure Stripe. Set `STRIPE_SECRET_KEY`, then create a webhook at <https://dashboard.stripe.com/webhooks> pointing at `https://<your-service>/api/stripe/webhook`, subscribed to:
 
