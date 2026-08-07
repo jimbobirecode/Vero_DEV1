@@ -25,6 +25,32 @@ async function loadSettings() {
   return settings;
 }
 
+// Turn a setup failure into something that names the actual problem.
+//
+// Every one of these used to read "the credit tables are not set up yet", which
+// is only true for the first case. Telling someone to re-run a migration that
+// already succeeded wastes their afternoon and hides the real fault.
+function setupError(result) {
+  switch (result.reason) {
+    case "no_tables":
+      return { status: 503, error: "The credit tables are not set up yet — run migrations/sms-credit.sql in the Supabase SQL editor." };
+    case "not_readable":
+      return {
+        status: 503,
+        error: "The credit tables exist but the API cannot read them yet. This is usually a stale PostgREST schema cache after a fresh migration — " +
+               "run  notify pgrst, 'reload schema';  in the SQL editor, or wait a minute and try again.",
+      };
+    case "insert_failed":
+      return {
+        status: 500,
+        error: `The credit account could not be created: ${result.detail}. ` +
+               `If this mentions club_id, re-run migrations/sms-credit.sql — an earlier version made club_id NOT NULL, which a deployment with no CLUB_ID set cannot satisfy.`,
+      };
+    default:
+      return { status: 500, error: "The credit account is unavailable." };
+  }
+}
+
 function baseUrl(req) {
   const configured = process.env.SURVEY_BASE_URL;
   if (configured) return configured.replace(/\/+$/, "");
@@ -37,6 +63,13 @@ router.get("/", async (req, res) => {
     const [settings, account] = await Promise.all([loadSettings(), store.getAccount()]);
     const balance = Number(account?.balance_cents) || 0;
     const currency = account?.currency || settings.sms_billing_currency || "USD";
+
+    // No account is ambiguous on its own: nobody has topped up yet, the tables
+    // are missing, or they exist and something else is wrong. Ask the store
+    // which, so the screen states the actual problem instead of guessing at the
+    // most common one.
+    let setup = { reason: "ok" };
+    if (!account) setup = await store.diagnose();
 
     const card = account?.stripe_payment_method_id
       ? await stripeLib.describeCard(account.stripe_payment_method_id)
@@ -62,6 +95,7 @@ router.get("/", async (req, res) => {
         last_error: account?.last_topup_error || null,
       },
 
+      setup,
       stripe_ready: stripeLib.isConfigured(),
       // Surfaced rather than hidden: with no rate set every message costs zero,
       // so the balance never moves and the hard stop never engages. That is a
@@ -131,10 +165,12 @@ router.post("/checkout", async (req, res) => {
 
   try {
     const settings = await loadSettings();
-    const account = await store.ensureAccount();
-    if (!account) {
-      return res.status(503).json({ error: "The credit tables are not set up yet — run migrations/sms-credit.sql." });
+    const setup = await store.ensureAccount();
+    if (!setup.account) {
+      const e = setupError(setup);
+      return res.status(e.status).json({ error: e.error });
     }
+    const account = setup.account;
 
     const customerId = await stripeLib.ensureCustomer({
       account, clubName: CLUB_NAME, email: req.user?.email, clubId: CLUB_ID,
@@ -168,10 +204,12 @@ router.post("/save-card", async (req, res) => {
     return res.status(503).json({ error: "Stripe is not configured on this deployment — set STRIPE_SECRET_KEY." });
   }
   try {
-    const account = await store.ensureAccount();
-    if (!account) {
-      return res.status(503).json({ error: "The credit tables are not set up yet — run migrations/sms-credit.sql." });
+    const setup = await store.ensureAccount();
+    if (!setup.account) {
+      const e = setupError(setup);
+      return res.status(e.status).json({ error: e.error });
     }
+    const account = setup.account;
 
     const customerId = await stripeLib.ensureCustomer({
       account, clubName: CLUB_NAME, email: req.user?.email, clubId: CLUB_ID,
@@ -224,10 +262,12 @@ router.put("/settings", async (req, res) => {
   if (!Object.keys(fields).length) return res.status(400).json({ error: "Nothing to update." });
 
   try {
-    const account = await store.ensureAccount();
-    if (!account) {
-      return res.status(503).json({ error: "The credit tables are not set up yet — run migrations/sms-credit.sql." });
+    const setup = await store.ensureAccount();
+    if (!setup.account) {
+      const e = setupError(setup);
+      return res.status(e.status).json({ error: e.error });
     }
+    const account = setup.account;
 
     // Turning auto top-up on without a card would produce a setting that looks
     // active and silently never fires.

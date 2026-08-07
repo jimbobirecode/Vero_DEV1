@@ -6134,9 +6134,26 @@
       html += creditNotice(`Credit is running low — ${esc(d.balance)} left.`, 'warn');
     }
     if(!d.configured){
-      html += creditNotice(
-        `No credit account exists yet. It is created the first time you top up, or run ` +
-        `<b>migrations/sms-credit.sql</b> if this deployment has not been set up.`, 'warn');
+      // The server says which of these it actually is. It used to guess at the
+      // most common one, which meant a database problem read as a missing
+      // migration and sent people to re-run SQL that had already worked.
+      const reason = d.setup && d.setup.reason;
+      const detail = d.setup && d.setup.detail ? `<div style="margin-top:6px;font-family:monospace;font-size:11px;color:var(--ink-soft);">${esc(d.setup.detail)}</div>` : '';
+      if(reason === 'no_tables'){
+        html += creditNotice(`<b>The credit tables do not exist yet.</b> Run <b>migrations/sms-credit.sql</b> in the Supabase SQL editor.${detail}`, 'bad');
+      } else if(reason === 'no_functions'){
+        html += creditNotice(
+          `<b>The credit tables exist but the database functions are missing</b>, so nothing can move a balance. ` +
+          `The migration applied only part way — re-run <b>migrations/sms-credit.sql</b> in full.${detail}`, 'bad');
+      } else if(reason === 'unreadable'){
+        html += creditNotice(
+          `<b>The credit tables cannot be read.</b> If this mentions a schema cache, run ` +
+          `<b>notify pgrst, 'reload schema';</b> in the SQL editor — Supabase's API caches the schema and ` +
+          `sometimes serves a stale copy after a fresh migration.${detail}`, 'bad');
+      } else {
+        html += creditNotice(
+          `Everything is set up — there is just no credit yet. The account is created the first time you top up.`, 'warn');
+      }
     }
     if(!d.enforced){
       html += creditNotice(
