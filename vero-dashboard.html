@@ -6139,7 +6139,12 @@
       // migration and sent people to re-run SQL that had already worked.
       const reason = d.setup && d.setup.reason;
       const detail = d.setup && d.setup.detail ? `<div style="margin-top:6px;font-family:monospace;font-size:11px;color:var(--ink-soft);">${esc(d.setup.detail)}</div>` : '';
-      if(reason === 'no_tables'){
+      if(reason === 'club_id_not_uuid'){
+        html += creditNotice(
+          `<b>CLUB_ID is set to "${esc(d.setup.detail)}", which is not a UUID.</b> Columns typed <code>uuid</code> cannot store it, ` +
+          `so it is being ignored and this deployment is treated as single-club — credit works, but check the setting. ` +
+          `Either set CLUB_ID to the uuid from your <b>club_integrations</b> row, or remove it entirely.`, 'bad');
+      } else if(reason === 'no_tables'){
         html += creditNotice(`<b>The credit tables do not exist yet.</b> Run <b>migrations/sms-credit.sql</b> in the Supabase SQL editor.${detail}`, 'bad');
       } else if(reason === 'no_functions'){
         html += creditNotice(

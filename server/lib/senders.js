@@ -1,7 +1,7 @@
 const { randomUUID } = require("crypto");
 const { supabase } = require("./supabase");
 const { readSecret } = require("./vault");
-const { CLUB_NAME } = require("./club-config");
+const { CLUB_NAME, CLUB_UUID } = require("./club-config");
 const { meterAndPrice } = require("./sms-billing");
 const credit = require("./sms-credit");
 const creditStore = require("./sms-credit-store");
@@ -23,7 +23,9 @@ async function loadCredentials(clubId) {
   };
 }
 
-const CLUB_ID = process.env.CLUB_ID || null;
+// Only ever a real uuid or null — see club-config.js. Writing a non-uuid label
+// here failed every message_log insert, losing the delivery record entirely.
+const CLUB_ID = CLUB_UUID;
 
 // The rate card, cached briefly.
 //
@@ -85,17 +87,22 @@ async function logMessage(memberId, channel, recipient, subject, body, status, e
 
   const { data, error } = await supabase.from("message_log").insert(entry).select("log_id").single();
 
-  // The billing columns are added by migrations/sms-credit.sql. Until it
-  // has been run the insert is rejected for unknown columns, and losing the
-  // delivery record — which is what the audit trail and the "already sent"
-  // checks rely on — would be a far worse failure than losing the meter
-  // reading. So fall back to the pre-billing shape and say so once.
-  if (error && /column .* does not exist|Could not find the '.*' column/i.test(error.message || "")) {
+  // Any failure at all falls back to the original, minimal shape.
+  //
+  // This used to retry only on an unknown-column error, on the assumption that
+  // a missing migration was the sole way the extended insert could fail. It was
+  // not: a CLUB_ID that is not a uuid made every insert fail on a type error,
+  // and because that pattern did not match, the delivery record was dropped
+  // entirely and the only trace was a line in the server log. message_log is
+  // what the audit trail and the "already sent" checks read, so losing a row is
+  // far worse than losing the meter reading attached to it — retry with the
+  // columns that have always existed and keep the record.
+  if (error) {
     console.error(
-      "[sms-billing] message_log is missing the billing columns — run migrations/sms-credit.sql. " +
-      "Logging the message without its meter reading; the send itself is unaffected."
+      "[sms-billing] could not write the full message_log entry, retrying without the billing columns:",
+      error.message
     );
-    const { data: fallback } = await supabase.from("message_log").insert({
+    const { data: fallback, error: fallbackError } = await supabase.from("message_log").insert({
       member_id: memberId ?? null, channel, recipient,
       subject: subject ?? null, body,
       // 'blocked' needs migrations/sms-credit.sql. Without it the row would be
@@ -104,10 +111,11 @@ async function logMessage(memberId, channel, recipient, subject, body, status, e
       status: status === "blocked" ? "failed" : status,
       error_message: errorMessage ?? null,
     }).select("log_id").single();
+
+    if (fallbackError) {
+      console.error("[sms-billing] the message_log entry could not be written at all:", fallbackError.message);
+    }
     return fallback?.log_id || null;
-  } else if (error) {
-    console.error("[sms-billing] could not write message_log entry:", error.message);
-    return null;
   }
   return data?.log_id || null;
 }

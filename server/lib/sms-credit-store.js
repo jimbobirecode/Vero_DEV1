@@ -12,7 +12,10 @@
 const { supabase } = require("./supabase");
 const credit = require("./sms-credit");
 
-const CLUB_ID = process.env.CLUB_ID || null;
+const { CLUB_UUID } = require("./club-config");
+
+// A uuid or null, never a label — the credit tables type club_id as uuid.
+const CLUB_ID = CLUB_UUID;
 
 // A missing table is not an error worth crashing a send over — it means the
 // migration has not been run. Callers treat a null account as "no credit

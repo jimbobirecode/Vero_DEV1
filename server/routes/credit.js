@@ -13,9 +13,9 @@ const { log, ACTIONS } = require("../lib/audit");
 const credit = require("../lib/sms-credit");
 const store = require("../lib/sms-credit-store");
 const stripeLib = require("../lib/stripe");
-const { CLUB_NAME } = require("../lib/club-config");
+const { CLUB_NAME, CLUB_UUID, CLUB_ID_INVALID, RAW_CLUB_ID } = require("../lib/club-config");
 
-const CLUB_ID = process.env.CLUB_ID || null;
+const CLUB_ID = CLUB_UUID;
 
 async function loadSettings() {
   const { data, error } = await supabase.from("club_settings").select("key, value");
@@ -70,6 +70,13 @@ router.get("/", async (req, res) => {
     // most common one.
     let setup = { reason: "ok" };
     if (!account) setup = await store.diagnose();
+
+    // A CLUB_ID that is not a uuid is reported whether or not there is an
+    // account, because it breaks more than credit: message_log carries the same
+    // column, so a label there silently drops every delivery record.
+    if (CLUB_ID_INVALID) {
+      setup = { reason: "club_id_not_uuid", detail: RAW_CLUB_ID, previous: setup.reason };
+    }
 
     const card = account?.stripe_payment_method_id
       ? await stripeLib.describeCard(account.stripe_payment_method_id)
