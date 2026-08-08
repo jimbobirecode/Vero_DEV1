@@ -20,7 +20,11 @@ function baseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-const VALID_TYPES = ["member", "visitor", "commercial", "other", "golf"];
+// The canonical list, shared with members and with the dashboard's dropdowns.
+// This used to be a local array, which is how it drifted from the <option>
+// tags on screen. See lib/person-types.js.
+const personTypes = require("../lib/person-types");
+const VALID_TYPES = personTypes.VALUES;
 
 // GET /api/visits?limit=50&offset=0&visitor_type=...
 router.get("/", async (req, res) => {
