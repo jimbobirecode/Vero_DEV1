@@ -119,6 +119,7 @@ global.fetch = async (url, opts) => {
   else sent.push({
     channel: "email",
     to: body.personalizations[0].to[0].email,
+    subject: body.subject || body.personalizations[0].subject || null,
     data: body.personalizations[0].dynamic_template_data || null,
     template_id: body.template_id || null,
     text: (body.content || []).map((c) => c.value).join(""),
@@ -206,6 +207,35 @@ const at = (hour, minute, date = "2026-08-05") => ({ hour, minute, date });
   check("and a working unsubscribe link", /\/u\/[0-9a-f-]{36}$/.test(email.data?.unsubscribe_url || ""), email.data?.unsubscribe_url);
   check("addressed by first name", email.data?.first_name === "Ben");
   check("naming the outlet", email.data?.outlet_name === "Main Dining Room");
+  check("the SMS greets Ann by her own name", /\bAnn,/.test(sms.text), sms.text);
+  // Whether the outlet survives depends on length: club name + name + outlet +
+  // link has to fit 160 characters or it costs a second segment on every send.
+  // Here it does not fit — by one character — so the outlet is dropped and the
+  // name kept, which is the documented trade. Assert the rule, not the outcome.
+  {
+    const { meter } = require("../lib/sms-billing");
+    const withOutlet = sms.text.replace("how was your visit today?", "how was the Main Dining Room today?");
+    const named = /Main Dining Room/.test(sms.text);
+    check("it names the outlet, or naming it would have cost a segment",
+      named || meter(withOutlet).segments > meter(sms.text).segments,
+      `named=${named} ${meter(sms.text).segments} -> ${meter(withOutlet).segments} seg`);
+  }
+  {
+    // Personalising must not quietly buy a second segment on every send.
+    const { meter } = require("../lib/sms-billing");
+    const impersonal = "Aronimink Golf Club: How was your visit today? Quick feedback, under a minute: " +
+      (sms.text.match(/https:\S+/) || [""])[0];
+    check("and costs no more segments than an impersonal message would",
+      meter(sms.text).segments <= meter(impersonal).segments,
+      `${meter(sms.text).segments} vs ${meter(impersonal).segments}`);
+  }
+  // With a dynamic template the subject travels as template data, for the
+  // template to place — SendGrid ignores a top-level subject when a template
+  // is set. The template has to reference {{subject}} for this to show.
+  check("the email subject greets Ben and names the outlet",
+    /Ben,/.test(email.data?.subject || "") && /Main Dining Room/.test(email.data?.subject || ""),
+    String(email.data?.subject));
+
   check("with the one-click unsubscribe header providers look for",
     /List-Unsubscribe/.test(JSON.stringify(email.headers)), JSON.stringify(email.headers));
   check("every link is unique to the member",

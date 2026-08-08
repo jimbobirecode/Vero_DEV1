@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const { supabase } = require("../lib/supabase");
 const { loadCredentials, sendSms, sendEmail } = require("../lib/senders");
 const { CLUB_NAME } = require("../lib/club-config");
-const { smsBody, emailSubject, resolveSurveyForVisit } = require("../lib/messages");
+const { smsBody, emailSubject, emailBody, resolveSurveyForVisit } = require("../lib/messages");
 const { applyMemberCap, parseCapSettings, modalityOf } = require("../lib/send-policy");
 const { resolveRecipient } = require("../lib/recipient");
 
@@ -229,14 +229,23 @@ async function performSend(linkBase) {
 
     const link = `${linkBase}/s/${token}`;
     const surveyType = survey.survey_type;
-    const message = smsBody({ surveyType, link });
+    // The member's own name and the room they were actually in. See
+    // lib/messages.js for what happens when the two together would cost an
+    // extra SMS segment.
+    const firstName = member?.first_name || (visit.guest_name || "").split(" ")[0] || "";
+    const outletName = outlet?.name || "";
+    const message = smsBody({ surveyType, link, firstName, outlet: outletName });
 
     try {
       if (sendChannel === "sms") {
         await sendSms(recipient, message, creds, logId, { kind: "survey" });
       } else {
         const nameParts = recipientName.split(" ");
-        await sendEmail(recipient, emailSubject({ surveyType }), message, creds, logId, {
+        const subject = emailSubject({ surveyType, firstName, outlet: outletName });
+        const body = emailBody({
+          surveyType, link, firstName, outlet: outletName, visitDate: visit.visit_date,
+        });
+        await sendEmail(recipient, subject, body, creds, logId, {
           first_name: nameParts[0] || "",
           last_name: nameParts.slice(1).join(" ") || "",
           survey_url: link,

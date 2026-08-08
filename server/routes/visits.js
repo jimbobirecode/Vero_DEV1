@@ -9,6 +9,7 @@ const { loadCredentials, sendSms, sendEmail } = require("../lib/senders");
 const pos = require("../lib/pos");
 const { ingestRows } = require("../lib/pos/ingest");
 const { CLUB_NAME } = require("../lib/club-config");
+const { smsBody, emailSubject, emailBody, surveyTypeForVisit } = require("../lib/messages");
 const { resolveRecipient } = require("../lib/recipient");
 const { applyMemberCap, parseCapSettings, modalityOf } = require("../lib/send-policy");
 
@@ -79,7 +80,8 @@ router.post("/", async (req, res) => {
 
   const { data: outlet } = await supabase
     .from("outlets")
-    .select("min_spend_threshold")
+    // name as well as the threshold: the survey message names the outlet.
+    .select("min_spend_threshold, name")
     .eq("outlet_id", outlet_id)
     .maybeSingle();
 
@@ -115,7 +117,6 @@ router.post("/", async (req, res) => {
       });
       if (!srErr) {
         const link = `${baseUrl(req)}/s/${token}`;
-        const message = `${CLUB_NAME}: We'd love your quick feedback on today's visit. Takes under a minute: ${link}`;
         const creds = await loadCredentials(CLUB_ID);
 
         let member = null, firstName, lastName, logId;
@@ -135,12 +136,24 @@ router.post("/", async (req, res) => {
           member, visit: { guest_phone, guest_email },
         });
         if (recipient) {
+          // Same wording as the scheduled batch — see lib/messages.js. This
+          // was a hand-written string, so a visit added by hand read
+          // differently from the identical visit arriving by upload.
+          const outletName = outlet?.name || "";
+          const surveyType = surveyTypeForVisit({ visitor_type: vType });
+          const message = smsBody({ surveyType, link, firstName, outlet: outletName });
+
           if (sendChannel === "sms") {
             await sendSms(recipient, message, creds, logId, { kind: "survey_on_visit" });
           } else {
-            await sendEmail(recipient, "How was your visit today?", message, creds, logId, {
+            const subject = emailSubject({ surveyType, firstName, outlet: outletName });
+            const body = emailBody({
+              surveyType, link, firstName, outlet: outletName, visitDate: visit_date,
+            });
+            await sendEmail(recipient, subject, body, creds, logId, {
               first_name: firstName || "", last_name: lastName || "",
-              survey_url: link, unsubscribe_url: `${baseUrl(req)}/u/${token}`, is_reminder: false,
+              survey_url: link, unsubscribe_url: `${baseUrl(req)}/u/${token}`,
+              outlet_name: outletName, visit_date: visit_date || "", is_reminder: false,
             });
           }
           const { error: stampErr } = await supabase

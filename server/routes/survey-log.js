@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { supabase } = require("../lib/supabase");
 const { loadCredentials, sendSms, sendEmail } = require("../lib/senders");
 const { CLUB_NAME } = require("../lib/club-config");
+const { smsBody, emailSubject, emailBody, surveyTypeForVisit } = require("../lib/messages");
 
 const CLUB_ID = process.env.CLUB_ID;
 const SURVEY_BASE_URL = process.env.SURVEY_BASE_URL;
@@ -66,7 +67,9 @@ router.post("/send", async (req, res) => {
   if (visit_id) {
     const { data } = await supabase
       .from("visits")
-      .select("*, members(*)")
+      // outlets(name) so the message can say where they were. Without it the
+      // resend was the one survey that still read impersonally.
+      .select("*, members(*), outlets(name)")
       .eq("visit_id", visit_id)
       .maybeSingle();
 
@@ -102,7 +105,7 @@ router.post("/send", async (req, res) => {
 
     const { data: latestVisit } = await supabase
       .from("visits")
-      .select("visit_id, outlet_id")
+      .select("visit_id, outlet_id, visit_date, visitor_type, outlets(name)")
       .eq("member_id", member_id)
       .order("visit_date", { ascending: false })
       .limit(1)
@@ -148,18 +151,31 @@ router.post("/send", async (req, res) => {
   }
 
   const link = `${baseUrl(req)}/s/${token}`;
-  const message = `${CLUB_NAME}: We'd love your quick feedback on your recent visit. Takes under a minute: ${link}`;
   const creds = await loadCredentials(CLUB_ID);
+
+  // Through lib/messages like every other send. This route used to build its
+  // own string, which is how it ended up as the only survey that never
+  // greeted the member or named the outlet.
+  const firstName = memberInfo?.first_name || (visit.guest_name || "").split(" ")[0] || "";
+  const outletName = visit.outlets?.name || "";
+  const surveyType = surveyTypeForVisit(visit);
+  const message = smsBody({ surveyType, link, firstName, outlet: outletName });
 
   try {
     if (sendChannel === "sms") {
       await sendSms(recipient, message, creds, logId, { kind: "survey_manual" });
     } else {
-      await sendEmail(recipient, "How was your visit?", message, creds, logId, {
+      const subject = emailSubject({ surveyType, firstName, outlet: outletName });
+      const body = emailBody({
+        surveyType, link, firstName, outlet: outletName, visitDate: visit.visit_date,
+      });
+      await sendEmail(recipient, subject, body, creds, logId, {
         first_name: memberInfo?.first_name || "",
         last_name: memberInfo?.last_name || "",
         survey_url: link,
         unsubscribe_url: `${baseUrl(req)}/u/${token}`,
+        outlet_name: outletName,
+        visit_date: visit.visit_date || "",
         is_reminder: false,
       });
     }

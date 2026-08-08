@@ -84,9 +84,24 @@ router.get("/preview/:id", async (req, res) => {
   // ones — otherwise it would show a message that is never sent.
   const isStaff = tpl.survey_type === "staff";
   const link = isStaff ? staffSampleLink(process.env.SURVEY_BASE_URL) : sampleLink(process.env.SURVEY_BASE_URL);
+
+  // Preview it the way it actually goes out — greeting a member by name and
+  // naming the room they were in. A preview of the impersonal fallback would
+  // show wording almost nobody receives, and would understate the length.
+  //
+  // A real outlet name rather than a placeholder, because whether the outlet
+  // survives into the message depends on how long it is; see lib/messages.js.
+  const { data: sampleOutlet } = await supabase
+    .from("outlets").select("name").eq("active", true).order("name").limit(1).maybeSingle();
+
   const sms = isStaff
     ? staffSmsBody({ link, firstName: "Jessica" })
-    : smsBody({ surveyType: tpl.survey_type, link });
+    : smsBody({
+        surveyType: tpl.survey_type, link,
+        firstName: "Sarah",
+        outlet: sampleOutlet?.name || "",
+        eventName: "the Member-Guest",
+      });
 
   res.json({
     template_id: tpl.template_id,
@@ -99,13 +114,19 @@ router.get("/preview/:id", async (req, res) => {
       sms,
       sms_length: sms.length,
       // Metered properly rather than by length/160, which this used to do and
-      // which was wrong in the direction that costs money: it ignores encoding
-      // entirely, so the golf survey — one em dash, therefore UCS-2, therefore
-      // three segments — reported as one. The count is what matters here, since
-      // a segment is what the club's credit is debited for; the encoding behind
-      // it stays in lib/sms-billing.js.
+      // which was wrong in the direction that costs money: length/160 ignores
+      // encoding entirely, so a message carrying one accented character — three
+      // segments in reality — reported as one. See lib/sms-billing.js.
       sms_segments: smsMeter(sms).segments,
-      email_subject: isStaff ? staffEmailSubject() : emailSubject({ surveyType: tpl.survey_type }),
+      sms_encoding: smsMeter(sms).encoding,
+      email_subject: isStaff
+        ? staffEmailSubject()
+        : emailSubject({
+            surveyType: tpl.survey_type,
+            firstName: "Sarah",
+            outlet: sampleOutlet?.name || "",
+            eventName: "the Member-Guest",
+          }),
       sample_link: link,
     },
     delivery: {

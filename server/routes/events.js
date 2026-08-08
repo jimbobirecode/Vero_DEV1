@@ -3,6 +3,7 @@ const router = express.Router();
 const crypto = require("crypto");
 const { supabase } = require("../lib/supabase");
 const { loadCredentials, sendSms, sendEmail } = require("../lib/senders");
+const { smsBody, emailSubject, emailBody } = require("../lib/messages");
 const { CLUB_NAME } = require("../lib/club-config");
 const { scoreResponses, summarise, normaliseCategory, CATEGORIES } = require("../lib/event-scores");
 const eventInsight = require("../lib/event-insight");
@@ -415,15 +416,23 @@ router.post("/:id/send-surveys", async (req, res) => {
       .eq("attendee_id", att.attendee_id);
 
     const link = `${baseUrl(req)}/s/${token}`;
-    // Hyphen, not an em dash: an em dash is outside GSM-7 and re-encodes the
-    // whole message as UCS-2, tripling its segment cost. See lib/sms-billing.js.
-    const message = `${CLUB_NAME}: How was ${event.name}? We'd love your quick feedback - takes under a minute: ${link}`;
+    // Through lib/messages, which greets the attendee by name — and drops the
+    // em dash this line used to carry. An em dash is outside GSM-7, so it
+    // re-encoded every event text as UCS-2 and charged three segments where
+    // one would do.
+    const message = smsBody({
+      surveyType: "events", link, firstName, eventName: event.name,
+    });
 
     try {
       if (sendChannel === "sms") {
         await sendSms(recipient, message, creds, logId, { kind: "event_survey" });
       } else {
-        await sendEmail(recipient, `How was ${event.name}?`, message, creds, logId, {
+        const subject = emailSubject({ surveyType: "events", firstName, eventName: event.name });
+        const body = emailBody({
+          surveyType: "events", link, firstName, eventName: event.name, visitDate: event.event_date,
+        });
+        await sendEmail(recipient, subject, body, creds, logId, {
           first_name: firstName,
           last_name: lastName,
           survey_url: link,
