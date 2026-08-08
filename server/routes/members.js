@@ -4,6 +4,8 @@ const multer = require("multer");
 const { PDFParse } = require("pdf-parse");
 const { supabase } = require("../lib/supabase");
 const { log, auditRead, ACTIONS } = require("../lib/audit");
+// The same vocabulary Visits uses for visitor_type — see lib/person-types.js.
+const personTypes = require("../lib/person-types");
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -11,11 +13,15 @@ const REQUIRED_COLUMNS = [
   "member_id", "first_name", "last_name", "phone_number",
   "email_address", "communication_preference", "opt_out_flag",
 ];
+// Deliberately not required. Every membership export in existence predates this
+// column, and refusing to load one for want of it would be a poor trade for a
+// field that has a sensible default.
+const OPTIONAL_COLUMNS = ["member_type"];
 const E164_RE = /^\+[1-9]\d{6,14}$/;
 
 // POST /api/members  — add a single member (from the Members screen's form)
 router.post("/", async (req, res) => {
-  const { member_id, first_name, last_name, phone_number, email_address, comm_preference, opt_out } = req.body;
+  const { member_id, first_name, last_name, phone_number, email_address, comm_preference, opt_out, member_type } = req.body;
   if (!member_id || !first_name || !last_name) {
     return res.status(400).json({ error: "member_id, first_name, and last_name are required" });
   }
@@ -24,10 +30,29 @@ router.post("/", async (req, res) => {
     phone_number: phone_number || null,
     email_address: email_address || null,
     comm_preference: comm_preference === "email" ? "email" : "sms",
+    member_type: personTypes.normalise(member_type),
     opt_out: Boolean(opt_out),
     updated_at: new Date().toISOString(),
   });
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    // The column arrives with migrations/member-types.sql. Until it has run,
+    // saving a person should still work — losing the record over a field the
+    // database has not heard of yet is the worse outcome.
+    if (/member_type/i.test(error.message || "")) {
+      const { error: retry } = await supabase.from("members").upsert({
+        member_id, first_name, last_name,
+        phone_number: phone_number || null,
+        email_address: email_address || null,
+        comm_preference: comm_preference === "email" ? "email" : "sms",
+        opt_out: Boolean(opt_out),
+        updated_at: new Date().toISOString(),
+      });
+      if (retry) return res.status(500).json({ error: retry.message });
+      console.error("[members] member_type column missing — run migrations/member-types.sql");
+      return res.json({ saved: true, member_type_ignored: true });
+    }
+    return res.status(500).json({ error: error.message });
+  }
   res.json({ saved: true });
 });
 
@@ -57,6 +82,19 @@ router.post("/import", async (req, res) => {
 
   const result = { total_rows: rows.length, created: 0, updated: 0, skipped: [] };
 
+  // Checked once, not per row. If the column is not there yet, a thousand-row
+  // import would otherwise fail a thousand times and report the whole roster as
+  // skipped — a migration that has not been run should cost the type, not the
+  // import.
+  let hasTypeColumn = true;
+  {
+    const { error: probe } = await supabase.from("members").select("member_type").limit(1);
+    if (probe && /member_type/i.test(probe.message || "")) {
+      hasTypeColumn = false;
+      console.error("[members] member_type column missing — run migrations/member-types.sql; importing without it");
+    }
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const memberId = String(row.member_id ?? "").trim();
@@ -66,6 +104,9 @@ router.post("/import", async (req, res) => {
     const email = String(row.email_address ?? "").trim();
     const pref = String(row.communication_preference ?? "sms").trim().toLowerCase() || "sms";
     const optOut = /^(yes|true|1)$/i.test(String(row.opt_out_flag ?? ""));
+    // Absent, blank or misspelled all fall back to "member" rather than
+    // skipping the row — see normalise() for the aliases a CRM actually emits.
+    const memberType = personTypes.normalise(row.member_type);
 
     if (!memberId || !firstName || !lastName) {
       result.skipped.push({ row: i + 2, member_id: memberId || "(blank)", reason: "Missing member_id, first_name, or last_name" });
@@ -88,6 +129,7 @@ router.post("/import", async (req, res) => {
       member_id: memberId, first_name: firstName, last_name: lastName,
       phone_number: validPhone, email_address: email || null,
       comm_preference: effectivePref,
+      ...(hasTypeColumn ? { member_type: memberType } : {}),
       opt_out: optOut, updated_at: new Date().toISOString(),
     });
     if (error) { result.skipped.push({ row: i + 2, member_id: memberId, reason: error.message }); continue; }
@@ -204,7 +246,7 @@ router.post("/import-pdf", upload.single("file"), async (req, res) => {
 
 // PUT /api/members/:id — update a member's details
 router.put("/:id", async (req, res) => {
-  const { first_name, last_name, phone_number, email_address, comm_preference, opt_out } = req.body;
+  const { first_name, last_name, phone_number, email_address, comm_preference, opt_out, member_type } = req.body;
   const updates = { updated_at: new Date().toISOString() };
 
   if (first_name !== undefined) updates.first_name = first_name;
@@ -213,6 +255,7 @@ router.put("/:id", async (req, res) => {
   if (email_address !== undefined) updates.email_address = email_address || null;
   if (comm_preference !== undefined) updates.comm_preference = comm_preference === "email" ? "email" : "sms";
   if (opt_out !== undefined) updates.opt_out = Boolean(opt_out);
+  if (member_type !== undefined) updates.member_type = personTypes.normalise(member_type);
 
   const { data, error } = await supabase
     .from("members")

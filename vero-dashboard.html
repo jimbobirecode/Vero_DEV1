@@ -808,6 +808,11 @@
           <div><label>Comm. preference</label>
             <select class="field" id="mPref"><option value="sms">SMS (default)</option><option value="email">Email</option></select>
           </div>
+          <!-- Same vocabulary as the visitor type on Visits. Both selects are
+               filled from /api/club-config so they cannot drift apart. -->
+          <div><label>Type</label>
+            <select class="field" id="mType" data-person-types></select>
+          </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);">
@@ -847,6 +852,7 @@
         <div id="memberEditPanel" style="display:none;margin-top:14px;padding:16px 18px;background:var(--ivory);border:1px solid var(--line);border-radius:8px;">
           <h3 style="margin:0 0 10px;font-size:14px;">Edit member <span id="editMemberId" class="mono" style="color:var(--brass);"></span></h3>
           <div class="member-form-grid">
+            <div><label>Type</label><select class="field" id="editType" data-person-types></select></div>
             <div><label>First name</label><input class="field" id="editFirst"></div>
             <div><label>Last name</label><input class="field" id="editLast"></div>
             <div><label>Phone (E.164)</label><input class="field" id="editPhone" placeholder="+16105551234"></div>
@@ -910,12 +916,10 @@
         <div class="member-form-grid" style="margin-bottom:10px;">
           <div>
             <label>Visitor type</label>
-            <select class="field" id="vVisitorType" onchange="toggleVisitorFields()">
-              <option value="member">Member</option>
-              <option value="visitor">Visitor / Guest</option>
-              <option value="commercial">Commercial</option>
-              <option value="other">Other</option>
-            </select>
+            <!-- Filled from /api/club-config, same as the Type field on People.
+                 These were two hardcoded lists that had already drifted from the
+                 server's own. -->
+            <select class="field" id="vVisitorType" data-person-types onchange="toggleVisitorFields()"></select>
           </div>
           <div id="vMemberIdWrap">
             <label>Member #</label>
@@ -2039,12 +2043,53 @@
   let _authToken = null;
   let _currentUser = null;
 
+  // The one vocabulary for "what kind of person is this", shared by the Type
+  // field on People and the visitor type on Visits.
+  //
+  // Held here after the first fetch so the members table and the visits list can
+  // label a stored value without asking again — including 'golf', which is a
+  // real stored type but never offered as an option, since golf visits come from
+  // the tee sheet importer rather than a form.
+  let PERSON_TYPES = [];
+  let PERSON_TYPE_LABELS = {};
+
+  function fillPersonTypeSelects(types, labels){
+    if(Array.isArray(types) && types.length) PERSON_TYPES = types;
+    if(labels && typeof labels === 'object') PERSON_TYPE_LABELS = labels;
+    if(!PERSON_TYPES.length) return;
+
+    document.querySelectorAll('select[data-person-types]').forEach(sel=>{
+      const previous = sel.value;
+      sel.innerHTML = '';
+      PERSON_TYPES.forEach(t=>{
+        const opt = document.createElement('option');
+        opt.value = t.value;
+        // textContent, not innerHTML — these are server-supplied strings and
+        // there is no reason to hand them to a parser.
+        opt.textContent = t.label;
+        sel.appendChild(opt);
+      });
+      // A select that was already showing something keeps it, so re-filling
+      // does not silently reset a half-completed form back to "Member".
+      if(previous && PERSON_TYPES.some(t=>t.value === previous)) sel.value = previous;
+    });
+  }
+
+  function personTypeLabel(value){
+    return PERSON_TYPE_LABELS[value] || value || '';
+  }
+
   async function initAuth(){
     try {
       const res = await fetch('/api/club-config');
       if(!res.ok) return;
       const cfg = await res.json();
       CLUB_NAME = cfg.club_name || '';
+
+      // People and Visits fill their type selects from here, so the two screens
+      // offer the same vocabulary by construction. They were previously two
+      // hardcoded lists, and had already drifted from the server's own.
+      fillPersonTypeSelects(cfg.person_types, cfg.person_type_labels);
 
       const el = document.getElementById('clubNameDisplay');
       if(el) el.textContent = CLUB_NAME;
@@ -2637,6 +2682,15 @@
       return;
     }
     const d = await res.json();
+    // A 200 is not a promise that the body has the shape this expects — a
+    // deployment whose member-health migration has not run returns a partial
+    // one, and reading d.summary.lapsed off it threw into the console. The
+    // "not available" path already exists a few lines up; this just reaches it.
+    if(!d || !d.summary){
+      strip.innerHTML = '<div class="stat"><div class="eyebrow">Member health</div><div class="note">Not available yet.</div></div>';
+      rows.innerHTML = '';
+      return;
+    }
     const money = (v) => v == null ? '—' : '$' + Math.round(Number(v)).toLocaleString('en-US');
 
     const stats = [
@@ -4301,7 +4355,10 @@
     members = (data || []).map(m => ({
       num: m.member_id, first: m.first_name, last: m.last_name,
       phone: m.phone_number || '', email: m.email_address || '',
-      pref: m.comm_preference || 'sms', optOut: Boolean(m.opt_out)
+      pref: m.comm_preference || 'sms', optOut: Boolean(m.opt_out),
+      // Anyone stored before migrations/member-types.sql ran has no type;
+      // they are members, which is all the table could hold at the time.
+      type: m.member_type || 'member'
     }));
     renderMembers();
   }
@@ -4318,11 +4375,12 @@
       (norm(m.first)+' '+norm(m.last)).toLowerCase().includes(q) || norm(m.num).toLowerCase().includes(q)
     );
     const table = document.getElementById('memberTable');
-    table.innerHTML = `<tr><th>Member #</th><th>Name</th><th>Phone</th><th>Email</th><th>Pref</th><th>Status</th><th></th></tr>` +
+    table.innerHTML = `<tr><th>Member #</th><th>Name</th><th>Type</th><th>Phone</th><th>Email</th><th>Pref</th><th>Status</th><th></th></tr>` +
       filtered.map((m,i)=>`
         <tr${editingMemberId===m.num?' style="background:var(--amber-soft);"':''}>
           <td class="mono">${esc(m.num)}</td>
           <td>${esc(m.last)}, ${esc(m.first)}</td>
+          <td><span class="visitor-badge ${esc(m.type)}">${esc(personTypeLabel(m.type))}</span></td>
           <td>${m.phone ? esc(m.phone) : '<span style="color:var(--ink-soft);">—</span>'}</td>
           <td>${m.email ? esc(m.email) : '<span style="color:var(--ink-soft);">—</span>'}</td>
           <td style="text-transform:uppercase;font-size:11px;color:var(--ink-soft);">${esc(m.pref)}</td>
@@ -4346,6 +4404,8 @@
     document.getElementById('editPhone').value = m.phone;
     document.getElementById('editEmail').value = m.email;
     document.getElementById('editPref').value = m.pref;
+    // Falls back to 'member' for anyone stored before the column existed.
+    document.getElementById('editType').value = m.type || 'member';
     document.getElementById('editOptOut').checked = m.optOut;
     document.getElementById('editMemberNote').textContent = '';
     document.getElementById('memberEditPanel').style.display = 'block';
@@ -4367,13 +4427,14 @@
     const email = document.getElementById('editEmail').value.trim();
     const pref = document.getElementById('editPref').value;
     const optOut = document.getElementById('editOptOut').checked;
+    const type = document.getElementById('editType').value;
     const noteEl = document.getElementById('editMemberNote');
 
     if(!first || !last){ alert('First and last name are required.'); return; }
 
     const res = await apiCall('/members/' + encodeURIComponent(editingMemberId), {
       method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ first_name:first, last_name:last, phone_number:phone, email_address:email, comm_preference:pref, opt_out:optOut })
+      body: JSON.stringify({ first_name:first, last_name:last, phone_number:phone, email_address:email, comm_preference:pref, member_type:type, opt_out:optOut })
     });
 
     if(res && res.ok){
@@ -4396,6 +4457,7 @@
     const email = document.getElementById('mEmail').value.trim();
     const pref = document.getElementById('mPref').value;
     const optOut = document.getElementById('mOptOut').checked;
+    const type = document.getElementById('mType').value;
 
     if(!num || !first || !last){ alert('Member #, first name, and last name are required.'); return; }
     if(pref==='sms' && !phone){ alert('SMS is the preferred channel but no phone number was entered — add one or switch preference to Email.'); return; }
@@ -4403,11 +4465,11 @@
 
     const res = await apiCall('/members', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ member_id:num, first_name:first, last_name:last, phone_number:phone, email_address:email, comm_preference:pref, opt_out:optOut })
+      body: JSON.stringify({ member_id:num, first_name:first, last_name:last, phone_number:phone, email_address:email, comm_preference:pref, member_type:type, opt_out:optOut })
     });
     document.getElementById('memberSaveNote').innerHTML = connectionNote();
     if(res && res.ok){
-      members.push({num, first, last, phone, email, pref, optOut});
+      members.push({num, first, last, phone, email, pref, optOut, type});
       ['mNum','mFirst','mLast','mPhone','mEmail'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('mOptOut').checked = false;
       renderMembers();
@@ -4527,7 +4589,11 @@
   }
 
   function downloadTemplate(){
-    const csv = 'member_id,first_name,last_name,phone_number,email_address,communication_preference,opt_out_flag\n001,Jane,Smith,+15551234567,jane@example.com,sms,no\n';
+    // member_type is optional — an export without it loads fine and everyone
+    // files as a member.
+    const csv = 'member_id,first_name,last_name,phone_number,email_address,communication_preference,opt_out_flag,member_type\n' +
+      '001,Jane,Smith,+15551234567,jane@example.com,sms,no,member\n' +
+      '002,Acme Corp,Events,+15559876543,events@acme.com,email,no,commercial\n';
     const blob = new Blob([csv], {type:'text/csv'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

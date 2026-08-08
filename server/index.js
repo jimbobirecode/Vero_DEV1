@@ -83,9 +83,15 @@ app.get("/api/health/db", requireCronSecret, async (req, res) => {
 });
 
 const { CLUB_NAME, CLUB_ID_SLUG } = require("./lib/club-config");
+const personTypes = require("./lib/person-types");
 app.get("/api/club-config", (req, res) => res.json({
   club_name: CLUB_NAME,
   club_id: CLUB_ID_SLUG,
+  // The People and Visits screens build their type dropdowns from this, so the
+  // two cannot offer different vocabularies for the same idea. Not sensitive —
+  // it is a fixed vocabulary, not club data.
+  person_types: personTypes.selectableOptions(),
+  person_type_labels: personTypes.LABELS,
   supabase_url: process.env.SUPABASE_URL,
   supabase_anon_key: process.env.SUPABASE_ANON_KEY || "",
 }));
