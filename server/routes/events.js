@@ -438,6 +438,12 @@ router.post("/:id/send-surveys", async (req, res) => {
           survey_url: link,
           unsubscribe_url: `${baseUrl(req)}/u/${token}`,
           event_name: event.name,
+          // Also as outlet_name, because that is the field the email template
+          // places in its heading. Without it an event email asked "how was
+          // your experience?" without ever naming the event the member had
+          // just been to — the one email where saying it matters most.
+          outlet_name: event.name,
+          visit_date: event.event_date || "",
           is_reminder: false,
         });
       }
