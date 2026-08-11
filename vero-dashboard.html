@@ -28,6 +28,9 @@
 <!-- Charts. Same origin, so the CSP (script-src 'self') is untouched, and no
      build step: Tremor is React + Tailwind and this dashboard is neither. -->
 <script src="/vero-charts.js"></script>
+<!-- Help articles. Generated from the same source as the printed user guide
+     (docs/help-centre/tools/content.js), so the two cannot drift apart. -->
+<script src="/vero-help.js"></script>
 <style>
   :root{
     /* Club Vero brand identity v1.0 — the five brand colours, verbatim. */
@@ -227,6 +230,9 @@
   .info-toast h3{font-size:14px;margin:0 0 6px;color:var(--forest);}
   .info-toast p{margin:4px 0;color:var(--ink);}
   .info-toast .close-toast{position:absolute;top:8px;right:12px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink-soft);line-height:1;}
+  .info-toast-help{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-soft);}
+  .help-toast-link{color:var(--brass);cursor:pointer;font-weight:500;display:inline-block;margin-left:6px;}
+  .help-toast-link:hover{text-decoration:underline;}
   .info-btn{background:none;border:1px solid var(--brass);color:var(--brass);width:22px;height:22px;border-radius:50%;font-size:12px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-left:8px;flex-shrink:0;}
   .info-btn:hover{background:var(--brass);color:#fff;}
   @keyframes slideIn{from{opacity:0;transform:translateX(30px);}to{opacity:1;transform:translateX(0);}}
@@ -440,6 +446,31 @@
   .import-summary.warn{background:var(--amber-soft);}
   .export-link{font-size:12px;color:var(--brass);cursor:pointer;font-weight:500;}
   .export-link:hover{text-decoration:underline;}
+
+  /* ---------- help & FAQ ---------- */
+  .nav-help{margin-top:2px;}
+  .help-search input{font-size:13.5px;padding:10px 14px;}
+  .help-card{border:1px solid var(--line);border-radius:8px;padding:13px 16px;margin-bottom:10px;cursor:pointer;background:var(--card);}
+  .help-card:hover{border-color:var(--brass);}
+  .help-card .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.06em;color:var(--brass);text-transform:uppercase;}
+  .help-card h3{font-family:'Fraunces',Georgia,serif;font-size:16px;font-weight:400;color:var(--forest);margin:3px 0 4px;}
+  .help-card p{font-size:12.5px;color:var(--ink-soft);margin:0;line-height:1.5;}
+  .help-where{font-size:11.5px;color:var(--ink-soft);margin-top:6px;}
+  .help-where b{color:var(--ink);font-weight:500;}
+  .help-group-head{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-soft);margin:18px 0 8px;}
+  .help-group-head:first-child{margin-top:0;}
+  .help-steps{counter-reset:helpstep;margin:0;padding:0;list-style:none;}
+  .help-steps li{counter-increment:helpstep;position:relative;padding-left:30px;margin-bottom:9px;font-size:13px;line-height:1.6;}
+  .help-steps li::before{content:counter(helpstep);position:absolute;left:0;top:0;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;color:var(--brass);}
+  .help-practice{background:var(--ivory);border-left:3px solid var(--brass);border-radius:0 6px 6px 0;padding:11px 15px;font-size:12.5px;line-height:1.6;margin-top:16px;}
+  .help-practice .lbl{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--brass);margin-right:7px;}
+  .help-shot{width:100%;border:1px solid var(--line);border-radius:8px;margin-top:10px;display:block;}
+  .help-faq{border-bottom:1px solid var(--line);padding:12px 0;}
+  .help-faq:last-child{border-bottom:none;}
+  .help-faq .q{font-size:13.5px;color:var(--forest);font-weight:500;margin-bottom:4px;}
+  .help-faq .a{font-size:12.5px;color:var(--ink-soft);line-height:1.6;}
+  .help-empty{text-align:center;color:var(--ink-soft);padding:28px 0;font-size:13px;}
+  .help-mark{background:var(--amber-soft);border-radius:2px;}
 </style>
 </head>
 <body>
@@ -530,6 +561,13 @@
       <div class="nav-item" data-tab="reports">Reports</div>
       <div class="nav-item" data-tab="billing">SMS Credit</div>
       <div class="nav-item" data-tab="settings">Settings</div>
+    </div>
+
+    <!-- Help sits outside the five groups and outside every role's restricted
+         list. A read-only department head who cannot open Settings still needs
+         to be able to read how Settings works. -->
+    <div class="nav-group">
+      <div class="nav-item nav-help" data-tab="help">Help &amp; FAQ</div>
     </div>
 
     <div id="idleWarning" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--brick);color:#fff;padding:8px 14px;font-size:12.5px;text-align:center;"></div>
@@ -2034,6 +2072,48 @@
       </div>
     </section>
 
+    <!-- ================= HELP & FAQ ================= -->
+    <!-- Content comes from vero-help.js, generated from the same source as the
+         printed user guide. Nothing here is fetched, so help still works when
+         the backend is the thing that is broken. -->
+    <section class="screen" id="screen-help">
+
+      <div id="helpListView">
+        <div class="panel">
+          <div class="search-bar help-search" style="margin-bottom:12px;">
+            <input id="helpSearch" placeholder="Search help — try “nobody got a survey”, “opt out”, “tee sheet”"
+                   oninput="renderHelp()" autocomplete="off">
+          </div>
+          <div class="filter-tabs" id="helpFilters">
+            <div class="filter-tab active" onclick="filterHelp('all', this)">All</div>
+            <div class="filter-tab" onclick="filterHelp('faq', this)">Common questions</div>
+          </div>
+          <div id="helpCount" style="font-size:11px;color:var(--ink-soft);margin-top:10px;"></div>
+        </div>
+
+        <div class="panel" id="helpFaqPanel">
+          <h2>Common questions</h2>
+          <div class="panel-sub">Each of these is answered by a screen. Work down the path and stop at the first thing that looks wrong.</div>
+          <div id="helpFaqList"></div>
+        </div>
+
+        <div class="panel" id="helpArticlesPanel">
+          <h2>Help articles</h2>
+          <div class="panel-sub" id="helpArticlesSub">Step-by-step guidance for every screen. Select an article to read it.</div>
+          <div id="helpArticleList"></div>
+        </div>
+      </div>
+
+      <div id="helpDetailView" style="display:none;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+          <button class="btn-secondary" onclick="closeHelpArticle()">&larr; All help</button>
+          <button class="btn-primary" id="helpGoToScreen" style="display:none;" onclick="helpOpenScreen()">Open this screen</button>
+        </div>
+        <div class="panel" id="helpDetailBody"></div>
+      </div>
+
+    </section>
+
   </main>
 </div>
 
@@ -2350,7 +2430,8 @@
     builder:['Survey Builder','Survey templates and question wording'],
     reports:['Reports','Period analytics, exportable to Excel or PDF'],
     billing:['SMS Credit','Prepaid message credit — balance, top-ups, and what it was spent on'],
-    settings:['Settings','Club profile, channels, and access']
+    settings:['Settings','Club profile, channels, and access'],
+    help:['Help & FAQ','How every screen works, and what to check when something looks wrong']
   };
 
   document.querySelectorAll('.nav-item').forEach(item=>{
@@ -2386,6 +2467,9 @@
     if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
     if(tab==='golf') { loadGolfOverview(); loadGolfSurveyLog(); loadGolfTemplate(); loadCrossover(); }
+    // Leaving Help drops back to the list, so returning to it later does not
+    // reopen whatever article was last read.
+    if(tab==='help') renderHelp(); else closeHelpArticle(true);
   }
 
   /* ---------- role switching ---------- */
@@ -2410,8 +2494,14 @@
     });
   });
 
+  // Held so Help can tell whether the screen an article describes is one this
+  // role may actually open — a read-only head can read the Settings article
+  // but must not be handed a button into Settings.
+  let activeRoleCfg = roleData.gm;
+
   function applyRole(role){
     const cfg = roleData[role];
+    activeRoleCfg = cfg;
     document.getElementById('roleBadge').textContent = cfg.badge;
 
     document.querySelectorAll('.nav-item').forEach(item=>{
@@ -6008,6 +6098,231 @@
     }
   };
 
+  /* ---------- help & FAQ ---------- */
+  // Everything here reads window.VERO_HELP, which is a plain script include.
+  // That is deliberate: the screen somebody most needs when the backend is
+  // down is the one telling them what to check, so help never makes a request.
+
+  let helpFilter = 'all';
+  let helpArticleOpen = null;
+
+  const helpArticles = () => (window.VERO_HELP?.sections || [])
+    .flatMap(s => s.articles.map(a => ({ ...a, section: s.title })));
+
+  const helpFaq = () => (window.VERO_HELP?.faq || []);
+
+  function findHelpArticle(n){ return helpArticles().find(a => a.n === n); }
+
+  // One haystack per article, built once per search. Menu paths are in it too,
+  // so searching "settings" finds the articles that send you to Settings and
+  // not only the one titled after it.
+  function helpHaystack(a){
+    return [a.n, a.title, a.purpose, a.where, a.section, a.practice, ...a.steps]
+      .join(' ').toLowerCase();
+  }
+
+  function helpTerms(){
+    return (document.getElementById('helpSearch')?.value || '')
+      .toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  }
+
+  // Matched at the start of a word rather than anywhere in it, so "opt" finds
+  // "opted out" but not "adopt", and "tee" finds the tee sheet but not
+  // "guarantee". Still a prefix, so plurals and tenses match without stemming.
+  function helpTermRegex(term, flags){
+    return new RegExp('\\b(' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', flags);
+  }
+
+  function helpMatches(haystack, terms){
+    return terms.every(t => helpTermRegex(t, 'i').test(haystack));
+  }
+
+  function helpScore(haystack, terms){
+    return terms.reduce((n, t) => n + (helpTermRegex(t, 'i').test(haystack) ? 1 : 0), 0);
+  }
+
+  // People type questions, not keywords — "why did nobody get a survey" has
+  // four words that appear nowhere in any article. Requiring all of them finds
+  // nothing and reads as "there is no help for this", which is the opposite of
+  // the truth. So: everything-matches first, and when that is empty, fall back
+  // to whatever matched most, said plainly.
+  function helpRank(items, terms, haystackOf){
+    const scored = items
+      .map(item => ({ item, score: helpScore(haystackOf(item), terms) }))
+      .filter(s => s.score > 0);
+    const strict = scored.filter(s => s.score === terms.length);
+    if(strict.length) return { items: strict.map(s => s.item), strict: true };
+    return {
+      items: scored.sort((a, b) => b.score - a.score).slice(0, 8).map(s => s.item),
+      strict: false,
+    };
+  }
+
+  // Marks the searched words in a rendered string. Escaping happens first, so
+  // the highlight can never be the thing that injects markup.
+  function helpHighlight(text, terms){
+    let out = esc(text || '');
+    if(!terms.length) return out;
+    // Longest first, so "survey" inside "surveys" does not split the longer
+    // match into pieces that then fail to match.
+    [...terms].sort((a,b) => b.length - a.length).forEach(t => {
+      out = out.replace(helpTermRegex(t, 'gi'), '<mark class="help-mark">$1</mark>');
+    });
+    return out;
+  }
+
+  function filterHelp(which, btn){
+    document.querySelectorAll('#helpFilters .filter-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    helpFilter = which;
+    renderHelp();
+  }
+
+  function renderHelp(){
+    const terms = helpTerms();
+    const listEl = document.getElementById('helpArticleList');
+    const faqEl = document.getElementById('helpFaqList');
+    if(!listEl || !faqEl) return;
+
+    if(!window.VERO_HELP){
+      listEl.innerHTML = '<div class="help-empty">Help content did not load. Reload the page — if it persists, vero-help.js is missing from the server.</div>';
+      document.getElementById('helpFaqPanel').style.display = 'none';
+      return;
+    }
+
+    const faqHay = f => (f.question + ' ' + f.answer).toLowerCase();
+    const faqRanked = terms.length
+      ? helpRank(helpFaq(), terms, faqHay)
+      : { items: helpFaq(), strict: true };
+    const articleRanked = terms.length
+      ? helpRank(helpArticles(), terms, helpHaystack)
+      : { items: helpArticles(), strict: true };
+
+    const matchedFaq = faqRanked.items;
+    const matchedArticles = helpFilter === 'faq' ? [] : articleRanked.items;
+    // Only say "closest matches" when nothing shown is an exact match. An
+    // exact article beside an approximate question is still an exact answer.
+    const loose = !(matchedArticles.length && articleRanked.strict)
+               && !(matchedFaq.length && faqRanked.strict);
+
+    document.getElementById('helpFaqPanel').style.display =
+      (helpFilter === 'all' || helpFilter === 'faq') && matchedFaq.length ? '' : 'none';
+    document.getElementById('helpArticlesPanel').style.display =
+      helpFilter === 'faq' ? 'none' : '';
+
+    faqEl.innerHTML = matchedFaq.map(f => `<div class="help-faq">
+      <div class="q">${helpHighlight(f.question, terms)}</div>
+      <div class="a">${helpHighlight(f.answer, terms)}</div>
+    </div>`).join('');
+
+    // Grouped by section so the list reads as the five parts of the product
+    // rather than as 23 undifferentiated rows. A search flattens the grouping,
+    // because relevance order matters more than structure once you are looking
+    // for one specific thing.
+    if(!matchedArticles.length && helpFilter !== 'faq'){
+      listEl.innerHTML = terms.length
+        ? '<div class="help-empty">Nothing matches “' + esc(document.getElementById('helpSearch').value) + '”. Try a word the screen itself uses — “queue”, “opt out”, “tee sheet”, “credit”.</div>'
+        : '';
+    } else if(terms.length){
+      listEl.innerHTML = matchedArticles.map(a => helpCard(a, terms, true)).join('');
+    } else {
+      listEl.innerHTML = (window.VERO_HELP.sections || []).map(s =>
+        `<div class="help-group-head">${esc(s.number)} · ${esc(s.title)}</div>` +
+        s.articles.map(a => helpCard(a, terms, false)).join('')
+      ).join('');
+    }
+
+    const countEl = document.getElementById('helpCount');
+    if(terms.length){
+      const bits = [];
+      if(matchedArticles.length) bits.push(matchedArticles.length + ' article' + (matchedArticles.length === 1 ? '' : 's'));
+      if(matchedFaq.length) bits.push(matchedFaq.length + ' common question' + (matchedFaq.length === 1 ? '' : 's'));
+      countEl.textContent = bits.length
+        ? (loose ? 'Nothing matches every word — closest matches: ' : '') + bits.join(' · ')
+        : 'Nothing found.';
+    } else {
+      countEl.textContent = helpArticles().length + ' articles · edition ' + (window.VERO_HELP.edition || '');
+    }
+  }
+
+  function helpCard(a, terms, showSection){
+    return `<div class="help-card" onclick="openHelpArticle('${jsAttr(a.n)}')">
+      <div class="eyebrow">Article ${esc(a.n)}${showSection ? ' · ' + esc(a.section) : ''}</div>
+      <h3>${helpHighlight(a.title, terms)}</h3>
+      <p>${helpHighlight(a.purpose, terms)}</p>
+      <div class="help-where">Where to find it: <b>${helpHighlight(a.where, terms)}</b></div>
+    </div>`;
+  }
+
+  function openHelpArticle(n){
+    const a = findHelpArticle(n);
+    if(!a) return;
+    helpArticleOpen = a;
+
+    // Called from a ? button on another screen as well as from the list, so it
+    // moves to Help itself rather than assuming it is already showing.
+    if(document.querySelector('.nav-item.active')?.dataset.tab !== 'help') showTab('help');
+
+    document.getElementById('helpListView').style.display = 'none';
+    document.getElementById('helpDetailView').style.display = '';
+
+    const goBtn = document.getElementById('helpGoToScreen');
+    const reachable = a.tab && !activeRoleCfg.restrictedTabs.includes(a.tab);
+    goBtn.style.display = reachable ? '' : 'none';
+
+    document.getElementById('helpDetailBody').innerHTML = `
+      <div class="help-card-head">
+        <div class="eyebrow" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.06em;color:var(--brass);text-transform:uppercase;">Article ${esc(a.n)}</div>
+        <h2 style="margin:4px 0 10px;">${esc(a.title)}</h2>
+      </div>
+      <div style="font-size:13px;margin-bottom:4px;"><b>Purpose:</b> ${esc(a.purpose)}</div>
+      <div style="font-size:13px;margin-bottom:16px;"><b>Where to find it:</b> ${esc(a.where)}</div>
+      <h3 style="font-size:13px;color:var(--brass);text-transform:uppercase;letter-spacing:0.05em;margin:0 0 10px;">Steps</h3>
+      <ol class="help-steps">${a.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+      <div class="help-practice"><span class="lbl">Good practice</span>${esc(a.practice)}</div>
+      ${a.images.length ? `<div style="margin-top:18px;">
+        <button class="btn-secondary" id="helpShotBtn" onclick="toggleHelpShots(this)">Show screenshot${a.images.length > 1 ? 's' : ''}</button>
+        <div id="helpShots" style="display:none;"></div>
+      </div>` : ''}
+    `;
+    window.scrollTo(0, 0);
+  }
+
+  // Screenshots are ~200KB each and most readers never open them, so they are
+  // only fetched when asked for.
+  function toggleHelpShots(btn){
+    const host = document.getElementById('helpShots');
+    if(!host || !helpArticleOpen) return;
+    const open = host.style.display !== 'none';
+    if(open){
+      host.style.display = 'none';
+      btn.textContent = 'Show screenshot' + (helpArticleOpen.images.length > 1 ? 's' : '');
+      return;
+    }
+    if(!host.dataset.loaded){
+      host.innerHTML = helpArticleOpen.images
+        .map(f => `<img class="help-shot" loading="lazy" alt="" src="/assets/help/${encodeURIComponent(f)}">`).join('');
+      host.dataset.loaded = '1';
+    }
+    host.style.display = '';
+    btn.textContent = 'Hide screenshot' + (helpArticleOpen.images.length > 1 ? 's' : '');
+  }
+
+  function helpOpenScreen(){
+    const tab = helpArticleOpen?.tab;
+    if(tab && !activeRoleCfg.restrictedTabs.includes(tab)) showTab(tab);
+  }
+
+  function closeHelpArticle(quiet){
+    helpArticleOpen = null;
+    const list = document.getElementById('helpListView');
+    const detail = document.getElementById('helpDetailView');
+    if(!list || !detail) return;
+    list.style.display = '';
+    detail.style.display = 'none';
+    if(!quiet) window.scrollTo(0, 0);
+  }
+
   let activeToast = null;
 
   function showCurrentInfo(){
@@ -6019,12 +6334,25 @@
     if(activeToast){ activeToast.remove(); activeToast = null; }
     const info = infoContent[tab];
     if(!info) return;
+
+    // The toast says how a screen works; the help article says how to work it.
+    // Rather than duplicate one into the other, the toast offers the article
+    // where there is one. The ? keys are screen names and a screen can have
+    // more than one article — Members carries both the member list and Member
+    // Health — so this offers each of them by name.
+    const related = helpArticles().filter(a => a.tab === tab);
+    const links = related.map(a =>
+      `<span class="help-toast-link" onclick="closeToast();openHelpArticle('${jsAttr(a.n)}')">${esc(a.title)} &rarr;</span>`
+    ).join('');
+
     const toast = document.createElement('div');
     toast.className = 'info-toast';
-    toast.innerHTML = `<button class="close-toast" onclick="closeToast()">&times;</button><h3>${info.title}</h3><p>${info.text}</p>`;
+    toast.innerHTML = `<button class="close-toast" onclick="closeToast()">&times;</button><h3>${info.title}</h3><p>${info.text}</p>`
+      + (links ? `<div class="info-toast-help">Step by step: ${links}</div>` : '');
     document.body.appendChild(toast);
     activeToast = toast;
-    setTimeout(()=>{ if(activeToast === toast) closeToast(); }, 15000);
+    // A toast offering something to click must not disappear mid-reach.
+    if(!links) setTimeout(()=>{ if(activeToast === toast) closeToast(); }, 15000);
   }
 
   function closeToast(){

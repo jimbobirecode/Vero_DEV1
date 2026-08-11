@@ -7,7 +7,7 @@ const {
 } = require('docx');
 
 const DIR = __dirname;
-const SHOTS = path.join(DIR, '..', 'screenshots');
+const SHOTS = path.join(DIR, '..', '..', '..', 'assets', 'help');
 const content = require('./content');
 
 // Club Vero brand identity, taken from the dashboard's own tokens.

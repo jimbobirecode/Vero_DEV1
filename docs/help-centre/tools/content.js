@@ -14,6 +14,7 @@ module.exports = {
           title: 'Sign in and understand your access',
           purpose: 'Get into Club Vero and understand why two people at the same club see different screens.',
           where: 'Your club’s Club Vero address',
+          tab: null,
           image: '01-signin.png',
           caption: 'The Club Vero sign-in screen.',
           steps: [
@@ -32,6 +33,7 @@ module.exports = {
           title: 'Find your way around',
           purpose: 'Learn the five menu groups so you can find any screen in one step.',
           where: 'The left-hand menu, on every screen',
+          tab: 'overview',
           image: '02-overview.png',
           caption: 'The Member Experience overview, with the five menu groups down the left.',
           steps: [
@@ -41,7 +43,8 @@ module.exports = {
             'Communications holds everything about sending and what was sent: Survey Queue, Events, Survey Log and Message Log.',
             'Setup holds configuration and money: Upload, Survey Builder, Reports, SMS Credit and Settings.',
             'Two menu items carry a count when there is something waiting — Case Alerts shows open cases in red, Survey Queue shows how many surveys are queued.',
-            'The ? button beside any screen title explains what that screen is built from and how to read it.',
+            'Help & FAQ sits on its own at the bottom of the menu, and every role can open it — including the screens that role cannot otherwise reach.',
+            'The ? button beside any screen title explains what that screen is built from, and links to the step-by-step article for it.',
           ],
           practice: 'The screen title is not always the menu name. Overview is titled Member Experience, and Survey Queue is titled Survey Queue but its panel is headed Queued surveys — the menu name is the reliable one.',
         },
@@ -50,6 +53,7 @@ module.exports = {
           title: 'A daily and weekly rhythm',
           purpose: 'Use Club Vero without adding another reporting burden to the week.',
           where: 'Across Setup, Communications and Intelligence',
+          tab: null,
           steps: [
             'Daily: upload the end-of-shift report in Setup → Upload, unless your POS already sends it automatically.',
             'Daily: open Intelligence → Case Alerts, assign each new case to a person, and call the members whose cases are close to their call-back window.',
@@ -75,6 +79,7 @@ module.exports = {
           title: 'Add, import and edit members',
           purpose: 'Keep the membership list that survey eligibility and delivery both depend on.',
           where: 'People → Members',
+          tab: 'members',
           image: '03-members.png',
           caption: 'People → Members. The list carries a type, a contact preference and an opt-out status for every record.',
           steps: [
@@ -93,6 +98,7 @@ module.exports = {
           title: 'Upload the end-of-shift report',
           purpose: 'Turn the day’s takings into survey opportunities without anyone reviewing a list.',
           where: 'Setup → Upload, or Upload end-of-shift report on the Overview screen',
+          tab: 'upload',
           image: '05-upload.png',
           caption: 'Setup → Upload. One file a day is the whole of the daily routine.',
           steps: [
@@ -110,6 +116,7 @@ module.exports = {
           title: 'Log a visit by hand and read the Visit log',
           purpose: 'Record visits that never reach the POS export, and answer the question “why did this member not get a survey?”',
           where: 'People → Visits',
+          tab: 'visits',
           image: '06-visits.png',
           caption: 'People → Visits. Add a visit at the top, every visit on record underneath.',
           steps: [
@@ -129,6 +136,7 @@ module.exports = {
           title: 'Work the Survey Queue',
           purpose: 'See who is due to receive a survey, when it will send, and why anything is stuck.',
           where: 'Communications → Survey Queue',
+          tab: 'queue',
           image: '07-queue.png',
           caption: 'Communications → Survey Queue. Ready rows sit above blocked ones, each blocked row carrying its reason.',
           steps: [
@@ -148,6 +156,7 @@ module.exports = {
           title: 'Check the Survey Log',
           purpose: 'Confirm what was asked, what came back, and chase what did not.',
           where: 'Communications → Survey Log',
+          tab: 'surveylog',
           image: '08-surveylog.png',
           caption: 'Communications → Survey Log, with a completed response expanded against the questions that member was actually asked.',
           steps: [
@@ -166,6 +175,7 @@ module.exports = {
           title: 'Check the Message Log',
           purpose: 'See every message Club Vero has actually sent, and what happened to it.',
           where: 'Communications → Message Log',
+          tab: 'messagelog',
           image: '09-messagelog.png',
           caption: 'Communications → Message Log. Every SMS and email, with the recipient and the delivery result.',
           steps: [
@@ -190,6 +200,7 @@ module.exports = {
           title: 'Respond to Case Alerts',
           purpose: 'Recover a member who has had a poor visit, and record what was done about it.',
           where: 'Intelligence → Case Alerts',
+          tab: 'alerts',
           image: '10-alerts.png',
           caption: 'Intelligence → Case Alerts. The strip along the top measures the recovery itself, not just the volume of complaints.',
           steps: [
@@ -209,6 +220,7 @@ module.exports = {
           title: 'Read AI Insights',
           purpose: 'See the themes running through the week’s comments instead of reading every one.',
           where: 'Intelligence → AI Insights',
+          tab: 'insights',
           image: '11-insights.png',
           caption: 'Intelligence → AI Insights. One narrative for the club, then theme clusters per outlet.',
           steps: [
@@ -225,6 +237,7 @@ module.exports = {
           title: 'Work Training Actions',
           purpose: 'Turn the week’s feedback into a short list of things the team will actually do.',
           where: 'Intelligence → Training Actions',
+          tab: 'training',
           image: '12-training.png',
           caption: 'Intelligence → Training Actions. One plan per outlet, each step tagged by urgency and ticked off as it is done.',
           steps: [
@@ -241,6 +254,7 @@ module.exports = {
           title: 'Coach with Server Performance',
           purpose: 'Use what members said and what the team said about the same shifts.',
           where: 'Overview → Server Performance',
+          tab: 'staff',
           image: '13-staff.png',
           caption: 'Overview → Server Performance: the leaderboard, the team’s own shift feedback, and the month’s coaching and recognition actions.',
           steps: [
@@ -258,6 +272,7 @@ module.exports = {
           title: 'Use Member Health',
           purpose: 'Find the members who have quietly stopped coming, before they resign.',
           where: 'People → Members (the panel above the member list)',
+          tab: 'members',
           image: '04-member-health.png',
           caption: 'Member Health sits at the top of People → Members: four figures, then the call list in priority order.',
           steps: [
@@ -275,6 +290,7 @@ module.exports = {
           title: 'Watch Outlets and Trends',
           purpose: 'Separate a bad week from a real movement.',
           where: 'Overview → Outlets and Overview → Trends',
+          tab: 'trends',
           image: '24-trends.png',
           caption: 'Overview → Trends. CSAT, Food, Service and NPS month on month, for the property or for one outlet.',
           extraImage: '25-outlets.png',
@@ -302,6 +318,7 @@ module.exports = {
           title: 'Run golf surveys from the tee sheet',
           purpose: 'Measure the golf experience after play, from the sheet you already produce.',
           where: 'Overview → Golf',
+          tab: 'golf',
           image: '14-golf.png',
           caption: 'Overview → Golf. Golf NPS, response rate and the three post-round scores, with the latest responses alongside.',
           extraImage: '16-teesheet.png',
@@ -322,6 +339,7 @@ module.exports = {
           title: 'Use Golf & dining crossover',
           purpose: 'See how much golf converts into food and beverage, and where it stops.',
           where: 'Overview → Golf (the Golf & dining crossover panel)',
+          tab: 'golf',
           image: '15-crossover.png',
           caption: 'Golf & dining crossover, measured in member-days so one round followed by two orders counts once.',
           steps: [
@@ -341,6 +359,7 @@ module.exports = {
           title: 'Create an event and survey attendees',
           purpose: 'Collect feedback on a function without distorting the outlet scores.',
           where: 'Communications → Events',
+          tab: 'events',
           image: '17-events.png',
           caption: 'Communications → Events. Events are scored as their own department, apart from the club indices.',
           steps: [
@@ -367,6 +386,7 @@ module.exports = {
           title: 'Build and maintain survey templates',
           purpose: 'Control what members are asked, without breaking the benchmarked indices.',
           where: 'Setup → Survey Builder',
+          tab: 'builder',
           image: '18-builder.png',
           caption: 'Setup → Survey Builder. Every question is listed with its type and, where it has one, the index it feeds.',
           steps: [
@@ -385,6 +405,7 @@ module.exports = {
           title: 'Configure the club, outlets and survey timing',
           purpose: 'Set the rules that decide who qualifies, who is told, and when anything sends.',
           where: 'Setup → Settings',
+          tab: 'settings',
           image: '19-settings.png',
           caption: 'Setup → Settings. Club profile at the top, then every outlet with its own thresholds and owner.',
           extraImage: '20-settings-timing.png',
@@ -406,6 +427,7 @@ module.exports = {
           title: 'Manage team members, servers and logins',
           purpose: 'Keep dashboard access, alert ownership and the front-line roster correct.',
           where: 'Setup → Settings (Team members, Servers and User accounts)',
+          tab: 'settings',
           image: '21-settings-team.png',
           caption: 'Team members hold roles and can own case alerts. Servers are credited with cheques and receive shift surveys.',
           steps: [
@@ -425,6 +447,7 @@ module.exports = {
           title: 'Keep SMS credit topped up',
           purpose: 'Stop text delivery from pausing because the balance reached zero.',
           where: 'Setup → SMS Credit',
+          tab: 'billing',
           image: '22-billing.png',
           caption: 'Setup → SMS Credit. Balance, roughly how many messages it buys, and automatic top-up.',
           steps: [
@@ -442,6 +465,7 @@ module.exports = {
           title: 'Produce the period report',
           purpose: 'Give the board or committee the same numbers the dashboard shows, in one document.',
           where: 'Setup → Reports',
+          tab: 'reports',
           image: '23-reports.png',
           caption: 'Setup → Reports. Everything is computed once on the server, so the export and the screen cannot disagree.',
           steps: [
@@ -476,7 +500,7 @@ module.exports = {
      'Setup → Settings. Confirm Staff shift surveys is On, and that the server has a phone number or email — anyone without either shows as Unreachable.'],
     ['A server’s name is not on the leaderboard',
      'Setup → Settings → Servers. Names credited with sales but with no server record are listed there and can be added in one click.'],
-    ['Someone cannot see a screen this guide describes',
+    ['Someone cannot see a screen described here',
      'Setup → Settings → Team members, and check their role. Members, Survey Builder, Settings and SMS Credit are restricted below General Manager.'],
     ['SMS surveys have stopped',
      'Setup → SMS Credit. Check the balance and whether automatic top-up is switched on.'],

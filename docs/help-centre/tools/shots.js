@@ -7,7 +7,7 @@ const CHROME = process.env.CHROMIUM_PATH ||
     .find(p => require('fs').existsSync(p));
 const fs = require('fs');
 
-const OUT = require('path').join(__dirname, '..', 'screenshots');
+const OUT = require('path').join(__dirname, '..', '..', '..', 'assets', 'help');
 fs.mkdirSync(OUT, { recursive: true });
 
 // `pre` runs before the shot; `scroll` brings a lower panel to the top.
@@ -41,7 +41,7 @@ const SHOTS = [
 
 (async () => {
   const b = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
-  const p = await b.newPage({ viewport: { width: 1500, height: 1000 }, deviceScaleFactor: 1.25 });
+  const p = await b.newPage({ viewport: { width: 1500, height: 1080 }, deviceScaleFactor: 1.25 });
   const errs = [];
   p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
@@ -81,7 +81,9 @@ const SHOTS = [
     await p.screenshot({ path: `${OUT}/${s.file}.png` });
   }
 
-  fs.writeFileSync(`${OUT}/errors.txt`, [...new Set(errs)].join('\n'));
-  console.log([...new Set(errs)].slice(0, 25).join('\n'));
+  // Printed rather than written: OUT is a public asset folder, and a debug
+  // file dropped in it would be served alongside the screenshots.
+  const unique = [...new Set(errs)];
+  console.log(unique.length ? unique.slice(0, 25).join('\n') : 'no console errors');
   await b.close();
 })();
