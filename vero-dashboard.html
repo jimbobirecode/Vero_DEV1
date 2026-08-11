@@ -1479,33 +1479,6 @@
       </div>
 
       <div class="panel" style="margin-top:16px;">
-        <h2>How credit is applied</h2>
-        <div class="panel-sub">Whether running out actually stops a send, and what one message segment costs. Until the price is set nothing is deducted, so the balance never moves and running out can never stop anything.</div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;max-width:620px;margin-top:6px;">
-          <div class="form-group">
-            <label>When credit runs out</label>
-            <select class="field" id="creditEnforced">
-              <option value="false">Keep sending — track spend only</option>
-              <option value="true">Stop sending until topped up</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Price per message segment</label>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <input class="field" id="creditRate" type="number" min="0" step="0.01" style="width:110px;">
-              <span style="font-size:12px;color:var(--ink-soft);">cents, from your carrier</span>
-            </div>
-          </div>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <button class="btn-primary" onclick="saveCreditPolicy()">Save</button>
-          <span id="creditPolicyNote" style="font-size:11.5px;"></span>
-        </div>
-      </div>
-
-      <div class="panel" style="margin-top:16px;">
         <h2>Payments</h2>
         <div class="panel-sub">Every top-up, refund and adjustment, newest first.</div>
         <div style="overflow-x:auto;">
@@ -2545,7 +2518,7 @@
     // reappear later in the session as though a second payment had landed.
     if(tab !== 'billing') creditBanner = null;
     if(tab==='reports') loadReport();
-    if(tab==='billing') { loadCredit(); loadCreditHistory(); loadCreditPolicy(); }
+    if(tab==='billing') { loadCredit(); loadCreditHistory(); }
     if(tab==='builder') loadSurveyTemplates();
     if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
@@ -7231,17 +7204,21 @@
           `Everything is set up — there is just no credit yet. The account is created the first time you top up.`, 'warn');
       }
     }
+    // Both of these are set on the server, so they name the variable rather
+    // than offering a control. A club reading this cannot act on it, which is
+    // the intent — enforcement and pricing are not theirs to change — but the
+    // person who can act on it reads the same screen.
     if(!d.enforced){
       html += creditNotice(
         `Credit is being tracked but <b>not enforced</b> — messages send whatever the balance. ` +
-        `Set <b>When credit runs out</b> to "Stop sending until topped up", under <b>How credit is applied</b> below, ` +
-        `to make running out actually stop a send.`, 'warn');
+        `Set <b>SMS_CREDIT_ENABLED=true</b> in the deployment's environment variables to make running out ` +
+        `actually stop a send.`, 'warn');
     }
     if(!d.rate_configured){
       html += creditNotice(
         `<b>No per-message price is configured, so nothing is being deducted.</b> The balance will never move and ` +
-        `running out can never stop a send. Set <b>Price per message segment</b>, under <b>How credit is applied</b> ` +
-        `below, to your carrier's per-segment price in cents.`, 'bad');
+        `running out can never stop a send. Set <b>SMS_RATE_CENTS_PER_SEGMENT</b> in the deployment's environment ` +
+        `variables to the carrier's per-segment price in cents.`, 'bad');
     }
     // Not a credit problem, but this is where someone will see it — and it is
     // the more serious of the two, because the same value builds every survey
@@ -7342,52 +7319,6 @@
       return;
     }
     note.innerHTML = '<span style="color:var(--sage);">Saved.</span>';
-    loadCredit();
-  }
-
-  // The two settings that decide whether credit is real: whether an empty
-  // balance stops a send, and what a segment costs. Both live in
-  // club_settings, and until this panel existed the only way to change either
-  // was to write SQL by hand — which the notice above cheerfully told people
-  // to do "in Settings", where there was nothing to find.
-  async function loadCreditPolicy(){
-    const res = await apiCall('/settings');
-    if(!res || !res.ok) return;
-    const s = await res.json();
-    const on = document.getElementById('creditEnforced');
-    const rate = document.getElementById('creditRate');
-    if(on) on.value = String(s.sms_credit_enabled ?? 'false').trim().toLowerCase() === 'true' ? 'true' : 'false';
-    // Blank rather than 0 when unset: 0 looks like a decision, blank looks
-    // like the unanswered question it is.
-    if(rate) rate.value = s.sms_rate_cents_per_segment ?? '';
-  }
-
-  async function saveCreditPolicy(){
-    const note = document.getElementById('creditPolicyNote');
-    const rate = document.getElementById('creditRate').value.trim();
-    if(rate !== '' && !(Number(rate) >= 0)){
-      note.innerHTML = '<span style="color:var(--brick);">The price must be a number of cents.</span>';
-      return;
-    }
-    note.innerHTML = '<span style="color:var(--ink-soft);">Saving…</span>';
-
-    const put = (key, value) => apiCall('/settings/' + key, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ value })
-    });
-
-    const results = [
-      await put('sms_credit_enabled', document.getElementById('creditEnforced').value),
-      await put('sms_rate_cents_per_segment', rate === '' ? '0' : rate),
-    ];
-    if(results.some(r => !r)){ note.innerHTML = '<span style="color:var(--brick);">No backend connected.</span>'; return; }
-    const bad = [];
-    for(const r of results){
-      if(!r.ok) bad.push((await r.json().catch(()=>({}))).error || 'Could not save.');
-    }
-    if(bad.length){ note.innerHTML = `<span style="color:var(--brick);">${esc(bad[0])}</span>`; return; }
-
-    note.innerHTML = '<span style="color:var(--sage);">Saved — this takes effect on the next message sent.</span>';
     loadCredit();
   }
 

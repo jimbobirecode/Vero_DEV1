@@ -175,5 +175,53 @@ check("a top-up is not folded into the daily rollup",
   summary.some((s) => s.kind === "topup"), false);
 check("an empty ledger summarises to nothing", C.summariseLedger([]), []);
 
+// ------------------------------------ the operator's switches, not the club's --
+//
+// Enforcement and pricing are set in the deployment's environment. A club that
+// could turn enforcement off, or set its own rate, would be choosing whether to
+// keep sending on an empty balance and what to pay for it. The database row
+// stays as a fallback for deployments that predate the variables — but where
+// both exist, the environment has to win, or the fallback is the override.
+{
+  const env = { ...process.env };
+  const restore = () => { for (const k of Object.keys(process.env)) delete process.env[k];
+                          Object.assign(process.env, env); };
+
+  process.env.SMS_CREDIT_ENABLED = "true";
+  check("the environment can switch enforcement on",
+    C.creditEnforced({}), true);
+  check("and overrules a club that set the row to false",
+    C.creditEnforced({ sms_credit_enabled: "false" }), true);
+
+  process.env.SMS_CREDIT_ENABLED = "false";
+  check("the environment can switch it off again", C.creditEnforced({}), false);
+  check("and overrules a club that set the row to true",
+    C.creditEnforced({ sms_credit_enabled: "true" }), false);
+
+  // Render writes an empty string for a variable left blank in its UI. Reading
+  // that as "false" would silently disable enforcement on a deployment that had
+  // merely not filled the box in.
+  process.env.SMS_CREDIT_ENABLED = "";
+  check("a blank variable is unset, not false",
+    C.creditEnforced({ sms_credit_enabled: "true" }), true);
+  delete process.env.SMS_CREDIT_ENABLED;
+  check("with nothing in the environment the database still decides",
+    C.creditEnforced({ sms_credit_enabled: "true" }), true);
+
+  process.env.SMS_RATE_CENTS_PER_SEGMENT = "2";
+  check("the rate comes from the environment", C.costOf("x", {}).cost_cents, 2);
+  check("and beats a cheaper rate the club stored",
+    C.costOf("x", { sms_rate_cents_per_segment: "0.01" }).cost_cents, 2);
+  process.env.SMS_MARKUP_PCT = "50";
+  check("the margin comes from there too", C.costOf("x", {}).cost_cents, 3);
+  restore();
+  check("and none of it leaks into the next test", C.costOf("x", {}).cost_cents, 0);
+}
+
+// The list the settings endpoint refuses to write. If a key is dropped from
+// here it becomes writable from the dashboard again, silently.
+check("every operator setting is named", C.OPERATOR_SETTING_KEYS,
+  ["sms_credit_enabled", "sms_rate_cents_per_segment", "sms_markup_pct", "sms_billing_currency"]);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -34,6 +34,16 @@ services:
       # separate front end needs access.
       - key: ALLOWED_ORIGINS
         sync: false
+      # SMS credit. Set on the server rather than in the dashboard: these
+      # decide what a club is charged and whether an empty balance stops a
+      # send, which are not the club's decisions to make. The API refuses to
+      # write the matching club_settings rows, so this is the only way in.
+      - key: SMS_CREDIT_ENABLED
+        value: "false"       # "true" makes running out actually stop sending
+      - key: SMS_RATE_CENTS_PER_SEGMENT
+        sync: false          # carrier price per segment, in cents; fractions allowed (0.79)
+      - key: SMS_MARKUP_PCT
+        sync: false          # margin over that price, as a percentage; unset bills at cost
       # Sendly/SendGrid are optional here — once a club saves credentials via
       # the Settings screen (Vault-backed), these env vars are just a
       # pre-launch fallback. Leave unset if you'd rather only use the GUI.

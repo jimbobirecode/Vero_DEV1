@@ -12,7 +12,7 @@
 // about metering. Rounding happens when a figure is shown, never when it is
 // stored.
 
-const { meter, rateCard, priceMessage } = require("./sms-billing");
+const { meter, rateCard, priceMessage, SETTING_KEYS } = require("./sms-billing");
 
 // ------------------------------------------------------------- what it costs --
 
@@ -42,9 +42,32 @@ function costOf(body, settings = {}) {
 // A deployment that upgrades into this feature must not stop sending surveys
 // because nobody has bought credit yet. Blocking begins when someone turns it
 // on, not when the migration runs.
+// It is also the operator's switch, not the club's. A club that could turn
+// enforcement off would be deciding for itself whether to keep sending on an
+// empty balance, which is the one decision it must not have. SMS_CREDIT_ENABLED
+// wins over club_settings wherever it is set, there is no control for it in the
+// dashboard, and routes/settings.js will not write the key.
 function creditEnforced(settings = {}) {
-  return String(settings.sms_credit_enabled ?? "false").trim().toLowerCase() === "true";
+  const fromEnv = process.env.SMS_CREDIT_ENABLED;
+  const value = fromEnv !== undefined && String(fromEnv).trim() !== ""
+    ? fromEnv
+    : (settings.sms_credit_enabled ?? "false");
+  return String(value).trim().toLowerCase() === "true";
 }
+
+// The settings the dashboard may not write, whatever role is asking.
+//
+// Each one decides what a club is charged or whether it may send at all, and
+// each is read from the environment first. Leaving the generic
+// PUT /api/settings/:key able to write them would mean a general manager could
+// set a database row that takes effect on any deployment where the matching
+// variable happens to be unset — which is the override this is here to stop.
+const OPERATOR_SETTING_KEYS = Object.freeze([
+  "sms_credit_enabled",
+  SETTING_KEYS.RATE,
+  SETTING_KEYS.MARKUP,
+  SETTING_KEYS.CURRENCY,
+]);
 
 // The gate, called before every SMS.
 //
@@ -255,7 +278,7 @@ function summariseLedger(entries = []) {
 }
 
 module.exports = {
-  costOf, creditEnforced, canSend,
+  costOf, creditEnforced, canSend, OPERATOR_SETTING_KEYS,
   balanceState, shouldWarn, BALANCE_STATES,
   shouldAutoTopup, TOPUP_LOCK_MS,
   validateTopup, MIN_TOPUP_CENTS, MAX_TOPUP_CENTS,

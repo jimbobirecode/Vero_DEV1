@@ -156,6 +156,31 @@ const SETTING_KEYS = {
   CURRENCY: "sms_billing_currency",
 };
 
+// The same three, set by whoever runs the deployment.
+//
+// What a segment costs is a contract between the operator and the carrier, and
+// the markup is the operator's margin. A club editing either would be choosing
+// what it is charged, so the environment wins over club_settings wherever it is
+// set and there is no control for it in the dashboard. routes/settings.js
+// refuses to write these keys at all, so the fallback below cannot be used as a
+// way round the environment.
+const ENV_KEYS = {
+  RATE: "SMS_RATE_CENTS_PER_SEGMENT",
+  MARKUP: "SMS_MARKUP_PCT",
+  CURRENCY: "SMS_BILLING_CURRENCY",
+};
+
+// The environment if it says anything, the database otherwise.
+//
+// An empty variable counts as unset — Render writes "" for a variable left
+// blank in its UI, and treating that as "the rate is zero" would silently stop
+// every deduction on a deployment that had merely not filled the box in.
+function operatorValue(envKey, settings, settingKey) {
+  const fromEnv = process.env[envKey];
+  if (fromEnv !== undefined && String(fromEnv).trim() !== "") return String(fromEnv).trim();
+  return settings[settingKey];
+}
+
 // Deliberately no default rate.
 //
 // Inventing one would mean every message priced at a plausible-looking but
@@ -177,8 +202,8 @@ function numeric(value, fallback) {
 // apart means a club can be shown a pass-through rate, or a marked-up one, or
 // the margin can be changed without losing what the underlying cost was.
 function rateCard(settings = {}) {
-  const rate = Math.max(0, numeric(settings[SETTING_KEYS.RATE], DEFAULT_RATE_CENTS));
-  const markup = Math.max(0, numeric(settings[SETTING_KEYS.MARKUP], 0));
+  const rate = Math.max(0, numeric(operatorValue(ENV_KEYS.RATE, settings, SETTING_KEYS.RATE), DEFAULT_RATE_CENTS));
+  const markup = Math.max(0, numeric(operatorValue(ENV_KEYS.MARKUP, settings, SETTING_KEYS.MARKUP), 0));
 
   return {
     rate_cents_per_segment: rate,
@@ -188,7 +213,7 @@ function rateCard(settings = {}) {
     // that cost $0.0079 — a 27% overcharge on every message a club sends.
     // Rounding happens when a balance is displayed, never when it is deducted.
     unit_price_cents: round6(rate * (1 + markup / 100)),
-    currency: settings[SETTING_KEYS.CURRENCY] || "USD",
+    currency: operatorValue(ENV_KEYS.CURRENCY, settings, SETTING_KEYS.CURRENCY) || "USD",
     configured: rate > 0,
   };
 }
@@ -246,5 +271,5 @@ module.exports = {
   // pricing
   rateCard, priceMessage, meterAndPrice, toCents, round6,
   // constants, exported for tests
-  SETTING_KEYS, GSM7_SINGLE, GSM7_MULTI, UCS2_SINGLE, UCS2_MULTI,
+  SETTING_KEYS, ENV_KEYS, GSM7_SINGLE, GSM7_MULTI, UCS2_SINGLE, UCS2_MULTI,
 };
