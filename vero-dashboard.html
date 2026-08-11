@@ -2273,6 +2273,13 @@
     document.getElementById('loginOverlay').style.display = 'none';
     document.getElementById('appShell').style.display = '';
     startSessionTimers();
+
+    // The survey templates are read by more screens than the Builder — the
+    // send dropdown on Visits and the template picker on Events both filter
+    // this list — so they are loaded once here, now that there is a token to
+    // load them with, rather than by whichever screen happens to open first.
+    loadStaff();
+    loadSurveyTemplates();
     // Shift managers keep the .role-switch block visible — the role buttons
     // inside it are already hidden for non-super-admins, and it holds the
     // "Signed in as" display and the Sign out button they need.
@@ -2512,6 +2519,7 @@
     if(tab !== 'billing') creditBanner = null;
     if(tab==='reports') loadReport();
     if(tab==='billing') { loadCredit(); loadCreditHistory(); }
+    if(tab==='builder') loadSurveyTemplates();
     if(tab==='settings') { loadStaffCache().then(() => loadSurveyTemplates().then(loadOutlets)); loadServerList(); loadStaff(); loadUserAccounts(); loadClubSettings(); }
     if(tab==='staff') { loadLeaderboard(); loadServerTasks(); loadStaffSurveys(); }
     if(tab==='golf') { loadGolfOverview(); loadGolfSurveyLog(); loadGolfTemplate(); loadCrossover(); }
@@ -7913,7 +7921,19 @@
 
   async function loadSurveyTemplates(){
     const res = await apiCall('/survey-templates');
-    if(!res) return;
+    if(!res || !res.ok){
+      // Returning quietly here left the Builder showing "No templates yet —
+      // create one to get started", which reads as an empty database when in
+      // fact the request failed. Say which it was.
+      const err = res ? await res.json().catch(() => ({})) : {};
+      const container = document.getElementById('templatesList');
+      if(container){
+        container.innerHTML = `<div style="text-align:center;color:var(--brick);padding:16px;">${
+          esc(err.error) || 'Could not load your surveys — the server did not answer. Nothing has been lost; try again in a moment.'
+        }</div>`;
+      }
+      return;
+    }
     const data = await res.json();
     surveyTemplates = data.templates || [];
     renderTemplatesList();
@@ -8195,9 +8215,10 @@
     loadSurveyTemplates();
   }
 
-  /* ---------- init: load staff + templates on page load ---------- */
-  loadStaff();
-  loadSurveyTemplates();
+  /* ---------- init ----------
+     Staff and templates are loaded from showApp(), once there is a session to
+     load them with. Fetching them here ran before sign-in, so every request
+     came back 401 and both lists stayed empty for the rest of the visit. */
 
   // Set default month for leaderboard to current month
   const _now = new Date();
