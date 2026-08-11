@@ -77,16 +77,108 @@ async function gather(range) {
 
   // In parallel: none of these depends on another, and a report that takes
   // four sequential round trips to Supabase is a report nobody waits for.
-  const [scores, previousScores, leaderboard, alerts, creditData, surveys] = await Promise.all([
+  const [scores, previousScores, leaderboard, alerts, creditData, surveys, responses, templates, events, previousResponses] = await Promise.all([
     scoresHandler ? fetchJson(scoresHandler, { start: range.from.slice(0, 10), end: range.to.slice(0, 10) }) : null,
     scoresHandler ? fetchJson(scoresHandler, { start: previous.from.slice(0, 10), end: previous.to.slice(0, 10) }) : null,
     gatherLeaderboard(range),
     gatherAlerts(range),
     gatherCredit(range),
     gatherSurveys(range),
+    gatherResponses(range),
+    gatherTemplates(),
+    gatherEvents(range),
+    gatherResponses(previous),
   ]);
 
-  return { scores, previousScores, leaderboard, alerts, credit: creditData, surveys };
+  return { scores, previousScores, leaderboard, alerts, credit: creditData, surveys, responses, templates, events, previousResponses };
+}
+
+// The period's responses, once, for every granular cut.
+//
+// One query rather than one per breakdown: the day-by-day table, the segments
+// and the per-question detail are the same rows grouped differently, and
+// fetching them separately is both slower and a way for two tables in the same
+// report to disagree.
+async function gatherResponses(range) {
+  const base =
+    "response_id, template_id, submitted_at, q1_nps, q2_overall_stars, q3_food_stars, q4_service_stars, q5_comment, answers, " +
+    "visits!inner(visit_date, visitor_type, outlets(name))";
+
+  // visit_time only exists where the migration has been run, and it is what
+  // the lunch/dinner split needs. Ask for it, and fall back without it rather
+  // than losing every other breakdown to one missing column.
+  // The same window /api/scores uses — whole days, from the same dates it is
+  // handed. Anything else and the headline and the breakdowns underneath it
+  // are computed over different sets of responses, which is precisely the
+  // disagreement building one model on the server is meant to prevent.
+  const start = `${range.from.slice(0, 10)}T00:00:00Z`;
+  const end = `${range.to.slice(0, 10)}T23:59:59Z`;
+
+  for (const select of [base.replace("visit_date,", "visit_date, visit_time,"), base]) {
+    const { data, error } = await supabase
+      .from("survey_responses")
+      .select(select)
+      .gte("submitted_at", start)
+      .lte("submitted_at", end)
+      .not("submitted_at", "is", null)
+      // Deliberately visits!inner: an event response has no visit, and events
+      // are reported separately precisely because they are not outlet trade.
+      .limit(10000);
+
+    if (!error) return data || [];
+    if (!/visit_time/.test(error.message || "")) {
+      console.error("[reports] responses:", error.message);
+      return [];
+    }
+  }
+  return [];
+}
+
+async function gatherTemplates() {
+  try {
+    const { data, error } = await supabase
+      .from("survey_templates")
+      .select("template_id, name, survey_type, questions");
+    if (error) return [];
+    return data || [];
+  } catch (e) {
+    console.error("[reports] templates:", String(e));
+    return [];
+  }
+}
+
+// Events, which are a department of their own and appear in no other section.
+async function gatherEvents(range) {
+  try {
+    const { scoreResponses, summarise } = require("../lib/event-scores");
+    const { data: events, error } = await supabase
+      .from("events")
+      .select("event_id, name, event_date, category")
+      .gte("event_date", range.from.slice(0, 10))
+      .lte("event_date", range.to.slice(0, 10));
+    if (error || !events?.length) return null;
+
+    const { data: attendees } = await supabase
+      .from("event_attendees")
+      .select("event_id, survey_responses(q1_nps, q2_overall_stars, submitted_at)")
+      .in("event_id", events.map((e) => e.event_id))
+      .not("survey_response_id", "is", null);
+
+    const byEvent = new Map(events.map((e) => [e.event_id, []]));
+    for (const a of attendees || []) {
+      if (a.survey_responses) byEvent.get(a.event_id)?.push(a.survey_responses);
+    }
+
+    const withScores = events.map((e) => ({
+      ...e,
+      responses: byEvent.get(e.event_id) || [],
+      ...scoreResponses(byEvent.get(e.event_id) || []),
+    }));
+    return { ...summarise(withScores), events: withScores };
+  } catch (e) {
+    console.error("[reports] events:", String(e));
+    return null;
+  }
 }
 
 async function gatherLeaderboard(range) {
@@ -202,6 +294,7 @@ async function buildModel(req) {
       clubName: CLUB_NAME,
       from: range.from, to: range.to,
       generatedAt: new Date().toISOString(),
+      granularity: ["day", "week", "month"].includes(req.query.granularity) ? req.query.granularity : "week",
       ...parts,
     }),
   };

@@ -414,6 +414,20 @@ create index if not exists case_alerts_assigned_idx on case_alerts (assigned_to_
   where assigned_to_staff_id is not null;
 
 
+-- ---------------------------------------------------------------------------
+-- The time of day a visit happened
+-- ---------------------------------------------------------------------------
+-- Reports can split lunch from dinner, but only where a visit knows when it
+-- was. visit_date is a date, and the POS import currently drops the clock time
+-- it finds — Lightspeed exports "2026-07-29 14:32:11" and the parser keeps the
+-- date. This column is where that time goes; until the import is changed to
+-- keep it the reports say plainly that the split is unavailable rather than
+-- inventing one.
+--
+-- Nullable, and every existing row stays null: a visit recorded before this
+-- simply has no time, which is the truth.
+alter table visits add column if not exists visit_time time;
+
 -- ===========================================================================
 -- 8. SMS CREDIT — prepaid balance and Stripe top-ups
 -- ===========================================================================

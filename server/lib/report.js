@@ -24,6 +24,8 @@ const INDEX_LABELS = {
   OHI: "Operational Health Index",
 };
 
+const detail = require("./report-detail");
+
 function round(n, dp = 1) {
   if (n == null || !isFinite(n)) return null;
   const f = Math.pow(10, dp);
@@ -83,12 +85,31 @@ function build({
   alerts = null,          // /api/alerts/severity-stats
   credit = null,          // { balance_cents, currency, usage: [...] }
   surveys = null,         // { sent, responded }
+  responses = [],         // the period's raw responses, for the granular cuts
+  previousResponses = [], // the same for the preceding period, for the deltas
+  templates = [],         // survey templates, so every question can be reported
+  events = null,          // lib/event-scores summarise() output
+  granularity = "week",   // day | week | month, for the trend tables
   generatedAt,
 } = {}) {
   const p = period(from, to);
 
-  const overall = scores?.overall || {};
-  const prev = previousScores?.overall || {};
+  // /api/scores answers one question — what are CHI, SSI and OHI — and returns
+  // only those. It carries no NPS, CSAT, food or service figure, so a report
+  // that read them from there printed a dash in every one of those columns.
+  // They are derived from the responses instead, which is also the only way
+  // the headline can agree with the breakdowns underneath it.
+  const rowsNow = Array.isArray(responses) ? responses : [];
+  const rowsPrev = Array.isArray(previousResponses) ? previousResponses : [];
+  const derived = detail.aggregate(rowsNow);
+  const derivedPrev = detail.aggregate(rowsPrev);
+
+  const overall = { ...(scores?.overall || {}) };
+  const prev = { ...(previousScores?.overall || {}) };
+  if (overall.nps == null && rowsNow.length) overall.nps = derived.nps;
+  if (overall.csat == null && rowsNow.length) overall.csat = derived.csat;
+  if (prev.nps == null && rowsPrev.length) prev.nps = derivedPrev.nps;
+  if (prev.csat == null && rowsPrev.length) prev.csat = derivedPrev.csat;
 
   // Headline figures, each with its change against the preceding period of the
   // same length — a number with no comparison is a number nobody can act on.
@@ -116,21 +137,38 @@ function build({
     delta: delta(round(overall[key], 1), round(prev[key], 1), 1),
   })).filter((i) => i.value != null);
 
-  const outlets = (scores?.by_outlet || []).map((o) => ({
-    outlet: o.outlet,
-    responses: o.response_count,
-    nps: round(o.nps, 0),
-    csat: round(o.csat, 2),
-    food: round(o.food, 2),
-    service: round(o.service, 2),
-  }));
+  // Per outlet: the response counts come from the scores payload, the scores
+  // themselves from the rows, for the reason above.
+  const byOutletRows = new Map();
+  for (const r of rowsNow) {
+    const name = r?.visits?.outlets?.name;
+    if (!name) continue;
+    if (!byOutletRows.has(name)) byOutletRows.set(name, []);
+    byOutletRows.get(name).push(r);
+  }
+  const outlets = (scores?.by_outlet || []).map((o) => {
+    const own = byOutletRows.get(o.outlet);
+    const a = own ? detail.aggregate(own) : null;
+    return {
+      outlet: o.outlet,
+      responses: o.response_count,
+      nps: o.nps != null ? round(o.nps, 0) : (a ? a.nps : null),
+      csat: o.csat != null ? round(o.csat, 2) : (a ? a.csat : null),
+      food: o.food != null ? round(o.food, 2) : (a ? a.food : null),
+      service: o.service != null ? round(o.service, 2) : (a ? a.service : null),
+    };
+  });
 
-  const months = (scores?.by_month || []).map((m) => ({
-    month: m.month,
-    responses: m.response_count,
-    nps: round(m.nps, 0),
-    csat: round(m.csat, 2),
-  }));
+  const derivedMonths = detail.byPeriod(rowsNow, "month");
+  const months = (scores?.by_month || []).map((m) => {
+    const own = derivedMonths.find((x) => x.key === m.month);
+    return {
+      month: m.month,
+      responses: m.response_count,
+      nps: m.nps != null ? round(m.nps, 0) : (own ? own.nps : null),
+      csat: m.csat != null ? round(m.csat, 2) : (own ? own.csat : null),
+    };
+  });
 
   const servers = (leaderboard || []).map((s, i) => ({
     rank: i + 1,
@@ -161,14 +199,45 @@ function build({
     cost_cents: round(u.amount_cents, 2),
   }));
 
+  // The granular half. Every one of these is derived from the same response
+  // rows, by lib/report-detail.js, so a figure here cannot disagree with the
+  // headline above it — they are the same answers grouped differently.
+  const nps_breakdown = detail.npsBreakdown(rowsNow);
+  const periods = detail.byPeriod(rowsNow, granularity);
+  const outlet_periods = detail.byOutletPeriod(rowsNow, granularity);
+  const segments = detail.bySegment(rowsNow);
+  const questions = detail.byQuestion(rowsNow, templates || []);
+
+  const eventRows = (events?.events || []).map((e) => ({
+    name: e.name,
+    date: e.event_date,
+    category: e.category,
+    responses: e.responses ?? e.response_count ?? 0,
+    nps: round(e.nps, 0),
+    csat: round(e.csat, 2),
+  }));
+
   return {
     club: clubName,
     period: p,
     generated_at: generatedAt || null,
+    granularity,
     headline,
     indices,
+    nps_breakdown,
     outlets,
     months,
+    periods,
+    outlet_periods,
+    segments,
+    questions,
+    events: events ? {
+      nps: round(events.nps, 0),
+      csat: round(events.csat, 2),
+      responses: events.responses ?? 0,
+      by_category: events.by_category || null,
+      list: eventRows,
+    } : null,
     servers,
     alerts: alertRows,
     alerts_total: alerts?.total ?? 0,
@@ -187,6 +256,11 @@ function build({
       !servers.length && "servers",
       !alertRows.length && "alerts",
       !months.length && "trend",
+      !periods.length && "periods",
+      !questions.length && "questions",
+      !segments.visitor_type.length && "segments",
+      !eventRows.length && "events",
+      !segments.daypart_available && "daypart",
       !credit && "credit",
     ].filter(Boolean),
   };
@@ -200,7 +274,18 @@ function sections(model) {
   ];
   if (model.indices.length) out.push({ key: "indices", title: "Club indices" });
   if (model.outlets.length) out.push({ key: "outlets", title: "By outlet" });
+  if (model.nps_breakdown && model.nps_breakdown.responses) {
+    out.push({ key: "nps_breakdown", title: "NPS composition" });
+  }
   if (model.months.length) out.push({ key: "trend", title: "Month on month" });
+  if (model.periods && model.periods.length) {
+    const g = model.granularity === "day" ? "Day by day" : model.granularity === "month" ? "Month by month" : "Week by week";
+    out.push({ key: "periods", title: g });
+  }
+  if (model.outlet_periods && model.outlet_periods.length) out.push({ key: "outlet_periods", title: "Outlet trends" });
+  if (model.segments && model.segments.visitor_type.length) out.push({ key: "segments", title: "Segments" });
+  if (model.questions && model.questions.length) out.push({ key: "questions", title: "Question detail" });
+  if (model.events && model.events.list.length) out.push({ key: "events", title: "Events" });
   if (model.servers.length) out.push({ key: "servers", title: "Server performance" });
   if (model.alerts.length) out.push({ key: "alerts", title: "Case alerts" });
   if (model.credit && model.credit.usage.length) out.push({ key: "credit", title: "SMS credit" });

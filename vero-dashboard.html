@@ -1286,7 +1286,13 @@
             <div class="panel-sub">Everything below is computed once on the server, so the download and the screen can never disagree.</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <select class="field" id="reportRange" style="width:auto;" onchange="loadReport()">
+            <select class="field" id="reportGranularity" style="width:auto;margin-right:8px;" onchange="loadReport()"
+                  title="How finely the trend tables are cut">
+            <option value="day">By day</option>
+            <option value="week" selected>By week</option>
+            <option value="month">By month</option>
+          </select>
+          <select class="field" id="reportRange" style="width:auto;" onchange="loadReport()">
               <option value="30">Last 30 days</option>
               <option value="90">Last quarter</option>
               <option value="180">Last 6 months</option>
@@ -1323,6 +1329,48 @@
         <h2>Server performance</h2>
         <div class="panel-sub">Servers with at least three responses in the period.</div>
         <div style="overflow-x:auto;"><table class="data-table" id="reportServers"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportNpsPanel" style="display:none;">
+        <h2>NPS composition</h2>
+        <div class="panel-sub">
+          The net score hides its own make-up: a club with few detractors and one with many
+          of both can net to the same number, and they need different work.
+        </div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportNps"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportPeriodsPanel">
+        <h2 id="reportPeriodsTitle">Week by week</h2>
+        <div class="panel-sub">The same responses as above, cut finely enough to see when something changed.</div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportPeriods"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportOutletTrendPanel">
+        <h2>Outlet trends</h2>
+        <div class="panel-sub">Each outlet over the same periods — whether a score has drifted or dropped.</div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportOutletTrends"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportSegmentPanel">
+        <h2>Segments</h2>
+        <div class="panel-sub" id="reportSegmentNote">Who the member was, and when they came in.</div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportSegments"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportQuestionPanel">
+        <h2>Question detail</h2>
+        <div class="panel-sub">
+          Every question in every template answered this period — including ones you added
+          yourself, which are collected and reported here even though they move no index.
+        </div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportQuestions"></table></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;" id="reportEventPanel">
+        <h2>Events</h2>
+        <div class="panel-sub">Scored separately from the outlets, and deliberately not part of the club indices.</div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportEvents"></table></div>
       </div>
 
       <div class="panel" style="margin-top:16px;" id="reportAlertPanel">
@@ -6755,7 +6803,9 @@
     VeroCharts.pending(headline, true);
     note.innerHTML = '<span style="color:var(--ink-soft);">Building the report…</span>';
 
-    const res = await apiCall('/reports/summary?days=' + encodeURIComponent(days));
+    const granularity = document.getElementById('reportGranularity').value;
+    const res = await apiCall('/reports/summary?days=' + encodeURIComponent(days) +
+      '&granularity=' + encodeURIComponent(granularity));
     VeroCharts.pending(headline, false);
 
     if(!res){ note.innerHTML = '<span style="color:var(--brick);">No backend connected.</span>'; return; }
@@ -6783,6 +6833,7 @@
     renderReportTable('reportAlerts', 'reportAlertPanel',
       ['Severity','Raised','Resolved','Still open'],
       d.alerts.map(a=>[a.label, a.raised, a.resolved, a.open]));
+    renderReportDetail(d);
   }
 
   function renderReportHeadline(d){
@@ -6869,6 +6920,85 @@
     });
   }
 
+  /* The granular sections.
+     Every figure is read straight off the model — the screen does no
+     arithmetic of its own, which is the only reason the download and the
+     screen can be trusted to agree. */
+  function renderReportDetail(d){
+    // NPS as its three parts.
+    const b = d.nps_breakdown;
+    renderReportTable('reportNps', 'reportNpsPanel',
+      ['Group','Responses','Share'],
+      (b && b.responses) ? [
+        ['Promoters (9–10)', b.promoters, b.promoter_pct == null ? '—' : b.promoter_pct + '%'],
+        ['Passives (7–8)',   b.passives,  b.passive_pct  == null ? '—' : b.passive_pct + '%'],
+        ['Detractors (0–6)', b.detractors, b.detractor_pct == null ? '—' : b.detractor_pct + '%'],
+        ['Net score', b.nps == null ? '—' : b.nps, ''],
+      ] : []);
+
+    // The finer trend.
+    const titles = { day: 'Day by day', week: 'Week by week', month: 'Month by month' };
+    const t = document.getElementById('reportPeriodsTitle');
+    if(t) t.textContent = titles[d.granularity] || 'Week by week';
+    renderReportTable('reportPeriods', 'reportPeriodsPanel',
+      ['Period','Responses','NPS','Promoters','Detractors','CSAT','Food','Service','Comments'],
+      (d.periods || []).map(p=>[p.label, p.responses, p.nps, p.promoters, p.detractors, p.csat, p.food, p.service, p.comments]));
+
+    // Each outlet over the same periods, flattened — the outlet is repeated
+    // per row rather than shown once, so the table can be sorted or pasted
+    // into a spreadsheet without losing which row belongs to which outlet.
+    const trendRows = [];
+    (d.outlet_periods || []).forEach(o=>{
+      o.periods.forEach(p=> trendRows.push([o.outlet, p.label, p.responses, p.nps, p.csat, p.food, p.service]));
+    });
+    renderReportTable('reportOutletTrends', 'reportOutletTrendPanel',
+      ['Outlet','Period','Responses','NPS','CSAT','Food','Service'], trendRows);
+
+    // Segments, three groupings in one table with a heading row between them.
+    const seg = d.segments || {};
+    const segRows = [];
+    const pushGroup = (heading, list)=>{
+      if(!list || !list.length) return;
+      segRows.push([{ heading }, '', '', '', '', '', '']);
+      list.forEach(r=> segRows.push([r.label, r.responses, r.nps, r.promoters, r.detractors, r.csat, r.service]));
+    };
+    pushGroup('By visitor type', seg.visitor_type);
+    pushGroup('By day of week', seg.weekday);
+    if(seg.daypart_available) pushGroup('By service', seg.daypart);
+    renderReportTable('reportSegments', 'reportSegmentPanel',
+      ['Segment','Responses','NPS','Promoters','Detractors','CSAT','Service'], segRows);
+
+    const segNote = document.getElementById('reportSegmentNote');
+    if(segNote){
+      segNote.textContent = seg.daypart_available
+        ? 'Who the member was, and when they came in.'
+        : 'Who the member was, and which day. Lunch and dinner cannot be separated: a visit is recorded with a date but no time.';
+    }
+
+    // Question by question, one heading row per template.
+    const qRows = [];
+    (d.questions || []).forEach(tpl=>{
+      qRows.push([{ heading: tpl.template + ' — ' + tpl.responses + ' response' + (tpl.responses === 1 ? '' : 's') }, '', '', '', '']);
+      tpl.questions.forEach(q=>{
+        qRows.push([
+          q.title,
+          q.answered,
+          q.type === 'text' ? '—' : q.average,
+          q.type === 'text' ? '—' : q.normalised,
+          q.index_label || 'Not benchmarked',
+        ]);
+      });
+    });
+    renderReportTable('reportQuestions', 'reportQuestionPanel',
+      ['Question','Answered','Average','Out of 100','Index'], qRows);
+
+    // Events.
+    const ev = d.events;
+    renderReportTable('reportEvents', 'reportEventPanel',
+      ['Event','Date','Type','Responses','NPS','CSAT'],
+      (ev && ev.list || []).map(e=>[e.name, e.date, e.category === 'golf' ? 'Golf' : 'General', e.responses, e.nps, e.csat]));
+  }
+
   function renderReportTable(tableId, panelId, headers, rows){
     const panel = document.getElementById(panelId);
     const table = document.getElementById(tableId);
@@ -6880,6 +7010,17 @@
     table.appendChild(hr);
     rows.forEach(r=>{
       const tr = document.createElement('tr');
+      // A row whose first cell is {heading} is a divider inside the table —
+      // used where several groupings share one table (segments, questions).
+      if(r[0] && typeof r[0] === 'object' && r[0].heading != null){
+        const td = document.createElement('td');
+        td.colSpan = headers.length;
+        td.textContent = r[0].heading;
+        td.style.cssText = 'font-weight:600;color:var(--forest);padding-top:14px;';
+        tr.appendChild(td);
+        table.appendChild(tr);
+        return;
+      }
       r.forEach(c=>{
         const td = document.createElement('td');
         td.textContent = c == null ? '—' : c;
@@ -6901,7 +7042,11 @@
     if(btn){ btn.disabled = true; btn.textContent = 'Preparing…'; }
 
     try {
-      const res = await apiCall('/reports/summary.' + format + '?days=' + encodeURIComponent(days));
+      // The export must cut the period the same way the screen does, or the
+      // spreadsheet disagrees with what the person was looking at.
+      const granularity = document.getElementById('reportGranularity').value;
+      const res = await apiCall('/reports/summary.' + format + '?days=' + encodeURIComponent(days) +
+        '&granularity=' + encodeURIComponent(granularity));
       if(!res || !res.ok){
         const err = res ? await res.json().catch(()=>({})) : {};
         note.innerHTML = `<span style="color:var(--brick);">${esc(err.error || 'The export failed.')}</span>`;

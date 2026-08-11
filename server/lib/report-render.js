@@ -112,6 +112,121 @@ async function toExcel(model, stream) {
     m.commit();
   }
 
+  // --- NPS composition
+  //
+  // The net score alone cannot tell a club with few detractors from one with
+  // many of both, and those need different work.
+  if (model.nps_breakdown && model.nps_breakdown.responses) {
+    const n = wb.addWorksheet("NPS composition");
+    headerRow(n, ["Group", "Responses", "Share"], [18, 12, 10]);
+    const b = model.nps_breakdown;
+    n.addRow(["Promoters (9-10)", b.promoters, b.promoter_pct == null ? "—" : b.promoter_pct + "%"]).commit();
+    n.addRow(["Passives (7-8)", b.passives, b.passive_pct == null ? "—" : b.passive_pct + "%"]).commit();
+    n.addRow(["Detractors (0-6)", b.detractors, b.detractor_pct == null ? "—" : b.detractor_pct + "%"]).commit();
+    n.addRow([]).commit();
+    n.addRow(["Net Promoter Score", b.nps ?? "—", ""]).commit();
+    n.commit();
+  }
+
+  // --- The finer trend
+  if (model.periods && model.periods.length) {
+    const title = model.granularity === "day" ? "Day by day"
+      : model.granularity === "month" ? "Month by month" : "Week by week";
+    const t = wb.addWorksheet(title);
+    headerRow(t, [title.split(" ")[0], "Responses", "NPS", "Promoters", "Detractors", "CSAT", "Food", "Service", "Comments"],
+      [18, 12, 9, 11, 11, 9, 9, 9, 11]);
+    model.periods.forEach((r) => t.addRow([
+      r.label, r.responses, r.nps ?? "—", r.promoters, r.detractors,
+      r.csat ?? "—", r.food ?? "—", r.service ?? "—", r.comments,
+    ]).commit());
+    t.commit();
+  }
+
+  // --- Each outlet's own trend, one long table rather than a sheet per outlet
+  if (model.outlet_periods && model.outlet_periods.length) {
+    const op = wb.addWorksheet("Outlet trends");
+    headerRow(op, ["Outlet", "Period", "Responses", "NPS", "CSAT", "Food", "Service"], [24, 18, 12, 9, 9, 9, 9]);
+    model.outlet_periods.forEach((o) => {
+      o.periods.forEach((r) => op.addRow([
+        o.outlet, r.label, r.responses, r.nps ?? "—", r.csat ?? "—", r.food ?? "—", r.service ?? "—",
+      ]).commit());
+    });
+    op.commit();
+  }
+
+  // --- Segments
+  if (model.segments && model.segments.visitor_type.length) {
+    const sg = wb.addWorksheet("Segments");
+    const block = (heading, rows) => {
+      if (!rows.length) return;
+      sg.addRow([heading]).font = { bold: true, size: 11, color: { argb: FOREST } };
+      const h = sg.addRow(["Segment", "Responses", "NPS", "Promoters", "Detractors", "CSAT", "Food", "Service"]);
+      h.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+      h.fill = { type: "pattern", pattern: "solid", fgColor: { argb: FOREST } };
+      rows.forEach((r) => sg.addRow([
+        r.label, r.responses, r.nps ?? "—", r.promoters, r.detractors,
+        r.csat ?? "—", r.food ?? "—", r.service ?? "—",
+      ]));
+      sg.addRow([]);
+    };
+    sg.columns = [{ width: 22 }, { width: 12 }, { width: 9 }, { width: 11 }, { width: 11 }, { width: 9 }, { width: 9 }, { width: 9 }];
+    block("By visitor type", model.segments.visitor_type);
+    block("By day of week", model.segments.weekday);
+    if (model.segments.daypart_available) {
+      block("By service", model.segments.daypart);
+    } else {
+      sg.addRow(["Lunch and dinner cannot be split: visits are recorded with a date but no time."])
+        .font = { italic: true, size: 9, color: { argb: SOFT } };
+    }
+    sg.commit();
+  }
+
+  // --- Question by question
+  //
+  // The sheet that did not exist before: a club could add a question in the
+  // Builder and never see it in a report.
+  if (model.questions && model.questions.length) {
+    const q = wb.addWorksheet("Question detail");
+    q.columns = [{ width: 44 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 12 }, { width: 30 }];
+    model.questions.forEach((tpl) => {
+      q.addRow([`${tpl.template} — ${tpl.responses} response${tpl.responses === 1 ? "" : "s"}`])
+        .font = { bold: true, size: 12, color: { argb: FOREST } };
+      const h = q.addRow(["Question", "Answered", "Average", "Out of 100", "Index", "Spread"]);
+      h.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+      h.fill = { type: "pattern", pattern: "solid", fgColor: { argb: FOREST } };
+      tpl.questions.forEach((qq) => {
+        const spread = qq.type === "text"
+          ? (qq.average_length == null ? "—" : `avg ${qq.average_length} characters`)
+          : (qq.distribution || []).filter((d) => d.count).map((d) => `${d.value}×${d.count}`).join("  ");
+        q.addRow([
+          qq.title,
+          qq.answered,
+          qq.type === "text" ? "—" : (qq.average ?? "—"),
+          qq.type === "text" ? "—" : (qq.normalised ?? "—"),
+          qq.index_label || "Not benchmarked",
+          spread || "—",
+        ]);
+      });
+      q.addRow([]);
+    });
+    q.commit();
+  }
+
+  // --- Events
+  if (model.events && model.events.list.length) {
+    const e = wb.addWorksheet("Events");
+    headerRow(e, ["Event", "Date", "Type", "Responses", "NPS", "CSAT"], [30, 14, 12, 12, 9, 9]);
+    model.events.list.forEach((r) => e.addRow([
+      r.name, r.date, r.category === "golf" ? "Golf" : "General", r.responses, r.nps ?? "—", r.csat ?? "—",
+    ]).commit());
+    e.addRow([]).commit();
+    e.addRow(["All events", "", "", model.events.responses, model.events.nps ?? "—", model.events.csat ?? "—"]).commit();
+    e.addRow([]).commit();
+    e.addRow(["Events are scored separately and do not feed the club indices."])
+      .font = { italic: true, size: 9, color: { argb: SOFT } };
+    e.commit();
+  }
+
   // --- Servers
   if (model.servers.length) {
     const sv = wb.addWorksheet("Server performance");
@@ -267,6 +382,81 @@ function toPdf(model, stream) {
       [{ label: "Month", weight: 1.6 }, { label: "Responses", weight: 1, align: "right" },
        { label: "NPS", weight: 1, align: "right" }, { label: "CSAT", weight: 1, align: "right" }],
       model.months.map((m) => [m.month, m.responses, m.nps, m.csat]));
+  }
+
+  if (model.nps_breakdown && model.nps_breakdown.responses) {
+    pdfHeading(doc, "NPS composition");
+    const b = model.nps_breakdown;
+    pdfTable(doc,
+      [{ label: "Group", weight: 2.2 }, { label: "Responses", weight: 1, align: "right" },
+       { label: "Share", weight: 1, align: "right" }],
+      [["Promoters (9-10)", b.promoters, b.promoter_pct == null ? "—" : b.promoter_pct + "%"],
+       ["Passives (7-8)", b.passives, b.passive_pct == null ? "—" : b.passive_pct + "%"],
+       ["Detractors (0-6)", b.detractors, b.detractor_pct == null ? "—" : b.detractor_pct + "%"]]);
+  }
+
+  if (model.periods && model.periods.length) {
+    const title = model.granularity === "day" ? "Day by day"
+      : model.granularity === "month" ? "Month by month" : "Week by week";
+    pdfHeading(doc, title);
+    pdfTable(doc,
+      [{ label: "Period", weight: 1.8 }, { label: "Responses", weight: 1, align: "right" },
+       { label: "NPS", weight: 0.8, align: "right" }, { label: "Promoters", weight: 1, align: "right" },
+       { label: "Detractors", weight: 1, align: "right" }, { label: "CSAT", weight: 0.9, align: "right" }],
+      model.periods.map((r) => [r.label, r.responses, r.nps ?? "—", r.promoters, r.detractors, r.csat ?? "—"]));
+  }
+
+  if (model.segments && model.segments.visitor_type.length) {
+    pdfHeading(doc, "Segments");
+    const cols = [{ label: "Segment", weight: 2 }, { label: "Responses", weight: 1, align: "right" },
+      { label: "NPS", weight: 0.8, align: "right" }, { label: "CSAT", weight: 0.9, align: "right" },
+      { label: "Food", weight: 0.9, align: "right" }, { label: "Service", weight: 1, align: "right" }];
+    const rows = (list) => list.map((r) => [r.label, r.responses, r.nps ?? "—", r.csat ?? "—", r.food ?? "—", r.service ?? "—"]);
+
+    doc.fillColor("#5B6259").fontSize(9).text("By visitor type");
+    pdfTable(doc, cols, rows(model.segments.visitor_type));
+    doc.fillColor("#5B6259").fontSize(9).text("By day of week");
+    pdfTable(doc, cols, rows(model.segments.weekday));
+    if (model.segments.daypart_available) {
+      doc.fillColor("#5B6259").fontSize(9).text("By service");
+      pdfTable(doc, cols, rows(model.segments.daypart));
+    } else {
+      doc.fillColor("#5B6259").fontSize(8.5)
+        .text("Lunch and dinner cannot be separated: a visit is recorded with a date but no time.");
+      doc.moveDown(0.4);
+    }
+  }
+
+  // Question detail, one table per template. The full answer spread lives in
+  // the spreadsheet — a board pack wants the averages, not every histogram.
+  if (model.questions && model.questions.length) {
+    pdfHeading(doc, "Question detail");
+    model.questions.forEach((tpl) => {
+      doc.fillColor("#5B6259").fontSize(9)
+        .text(`${tpl.template} — ${tpl.responses} response${tpl.responses === 1 ? "" : "s"}`);
+      pdfTable(doc,
+        [{ label: "Question", weight: 3.4 }, { label: "Answered", weight: 1, align: "right" },
+         { label: "Average", weight: 1, align: "right" }, { label: "Out of 100", weight: 1.1, align: "right" },
+         { label: "Index", weight: 1.4 }],
+        tpl.questions.map((q) => [
+          q.title, q.answered,
+          q.type === "text" ? "—" : (q.average ?? "—"),
+          q.type === "text" ? "—" : (q.normalised ?? "—"),
+          q.index_label || "Not benchmarked",
+        ]));
+    });
+  }
+
+  if (model.events && model.events.list.length) {
+    pdfHeading(doc, "Events");
+    pdfTable(doc,
+      [{ label: "Event", weight: 2.6 }, { label: "Date", weight: 1.2 },
+       { label: "Type", weight: 0.9 }, { label: "Responses", weight: 1, align: "right" },
+       { label: "NPS", weight: 0.8, align: "right" }, { label: "CSAT", weight: 0.9, align: "right" }],
+      model.events.list.map((e) => [e.name, e.date, e.category === "golf" ? "Golf" : "General", e.responses, e.nps ?? "—", e.csat ?? "—"]));
+    doc.fillColor("#5B6259").fontSize(8.5)
+      .text("Events are scored separately and do not feed the club indices.");
+    doc.moveDown(0.4);
   }
 
   if (model.servers.length) {

@@ -106,7 +106,11 @@ check("a club with no data still produces a report", typeof bare.period.label, "
 check("with its headline present but empty", bare.headline.length, 4);
 check("no invented values", bare.headline[0].value, null);
 check("and it says which sections are absent",
-  bare.empty_sections.sort(), ["alerts", "credit", "outlets", "servers", "trend"]);
+  bare.empty_sections.sort(),
+  // The granular sections say so too, including daypart — which is absent
+  // because no visit carries a clock time, not because nobody ate at lunch.
+  ["alerts", "credit", "daypart", "events", "outlets", "periods", "questions",
+   "segments", "servers", "trend"]);
 check("no indices when nothing feeds them", bare.indices.length, 0);
 
 check("sections list only what has data", R.sections(bare).map((s) => s.key), ["summary"]);
