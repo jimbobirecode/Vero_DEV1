@@ -4315,8 +4315,27 @@
       const data = await res.json();
       if(!res.ok){ alert(data.error || 'Generation failed'); return; }
 
-      btn.textContent = `${data.tasks_generated} tasks generated`;
-      btn.style.background = 'var(--sage)';
+      // The tasks are filed under the month the period starts in, and the list
+      // below is filtered by the month picker — which defaults to today. Analyse
+      // last month and the tasks were written, then never asked for. Move the
+      // picker to where the work actually went.
+      const monthEl = document.getElementById('leaderboardMonth');
+      if(data.month && monthEl && monthEl.value !== data.month){
+        monthEl.value = data.month;
+        loadLeaderboard();
+      }
+
+      // Count what was saved, not what was attempted. These used to be the same
+      // number on screen even when every insert had failed.
+      const saved = data.tasks_inserted ?? 0;
+      btn.textContent = saved === 1 ? '1 task added' : `${saved} tasks added`;
+      btn.style.background = saved > 0 ? 'var(--sage)' : '';
+
+      if(data.errors && data.errors.length){
+        alert(data.errors.join('\n\n'));
+      } else if(saved === 0 && data.note){
+        alert(data.note);
+      }
       loadServerTasks();
     } catch(e){
       alert('Error: ' + e);

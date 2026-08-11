@@ -306,6 +306,10 @@ router.post("/generate-monthly", async (req, res) => {
     const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
     const tasksToInsert = [];
     const aiResults = [];
+    // Collected rather than only logged: a run where every model call failed
+    // still writes tasks, and the person reading the screen should know the
+    // wording came from the scores rather than from the analysis.
+    const aiFailures = [];
 
     for (const s of Object.values(serverMap)) {
       const avg_nps = avg(s.nps_scores);
@@ -359,17 +363,35 @@ Respond with ONLY valid JSON (no markdown, no preamble):
         }),
       });
 
-      const aiData = await aiRes.json();
-      const text = aiData.content?.[0]?.text ?? "{}";
+      // The task written from the scores alone, used whenever the model does
+      // not come back with something usable. server_tasks.title is NOT NULL,
+      // so a task with no title is not a degraded task — it is an insert the
+      // database rejects, which used to be reported to the screen as a
+      // success with nothing to show for it.
+      const fromScores = () => ({
+        title: `${category === "training" ? "Improvement needed" : "Recognition"} for ${s.server_name}`,
+        description: `Composite score: ${composite.toFixed(2)}/5 over ${s.survey_count} surveys`,
+        key_metric: `${s.survey_count} surveys, composite ${composite.toFixed(2)}`,
+      });
+
+      const aiData = await aiRes.json().catch(() => ({}));
+
+      // An API error arrives as a normal body with no content array, and
+      // "{}" parses perfectly well — so catching a JSON error was never
+      // enough to notice. What matters is whether a title came back.
       let parsed;
-      try {
-        parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      } catch {
-        parsed = {
-          title: `${category === "training" ? "Improvement needed" : "Recognition"} for ${s.server_name}`,
-          description: `Composite score: ${composite.toFixed(2)}/5`,
-          key_metric: `${s.survey_count} surveys, composite ${composite.toFixed(2)}`,
-        };
+      if (aiData?.error || !aiData?.content?.[0]?.text) {
+        const why = aiData?.error?.message || "the AI service returned nothing usable";
+        console.error(`[analysis] ${s.server_name}: ${why} — writing the task from the scores instead`);
+        aiFailures.push(`${s.server_name}: ${why}`);
+        parsed = fromScores();
+      } else {
+        try {
+          parsed = JSON.parse(aiData.content[0].text.replace(/```json|```/g, "").trim());
+        } catch {
+          parsed = fromScores();
+        }
+        if (!parsed || !parsed.title) parsed = fromScores();
       }
 
       const task = {
@@ -449,12 +471,21 @@ router.post("/generate-analysis", async (req, res) => {
     }
 
     if (!Object.keys(serverMap).length) {
-      return res.json({ period: label || `${start_date} to ${end_date}`, servers_analyzed: 0, tasks_generated: 0, tasks_inserted: 0, results: [] });
+      return res.json({
+        period: label || `${start_date} to ${end_date}`,
+        month: String(start_date).slice(0, 7),
+        servers_analyzed: 0, tasks_generated: 0, tasks_inserted: 0, results: [],
+        note: "No completed surveys in that period name a server, so there was nothing to analyse. Check the period, and that visits are being logged with a server against them.",
+      });
     }
 
     const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
     const tasksToInsert = [];
     const aiResults = [];
+    // Collected rather than only logged: a run where every model call failed
+    // still writes tasks, and the person reading the screen should know the
+    // wording came from the scores rather than from the analysis.
+    const aiFailures = [];
     const periodLabel = label || `${start_date} to ${end_date}`;
     const monthKey = start_date.slice(0, 7);
 
@@ -514,17 +545,35 @@ Respond with ONLY valid JSON (no markdown, no preamble):
         body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 500, messages: [{ role: "user", content: prompt }] }),
       });
 
-      const aiData = await aiRes.json();
-      const text = aiData.content?.[0]?.text ?? "{}";
+      // The task written from the scores alone, used whenever the model does
+      // not come back with something usable. server_tasks.title is NOT NULL,
+      // so a task with no title is not a degraded task — it is an insert the
+      // database rejects, which used to be reported to the screen as a
+      // success with nothing to show for it.
+      const fromScores = () => ({
+        title: `${category === "training" ? "Improvement needed" : "Recognition"} for ${s.server_name}`,
+        description: `Composite score: ${composite.toFixed(2)}/5 over ${s.survey_count} surveys`,
+        key_metric: `${s.survey_count} surveys, composite ${composite.toFixed(2)}`,
+      });
+
+      const aiData = await aiRes.json().catch(() => ({}));
+
+      // An API error arrives as a normal body with no content array, and
+      // "{}" parses perfectly well — so catching a JSON error was never
+      // enough to notice. What matters is whether a title came back.
       let parsed;
-      try {
-        parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      } catch {
-        parsed = {
-          title: `${category === "training" ? "Improvement needed" : "Recognition"} for ${s.server_name}`,
-          description: `Composite score: ${composite.toFixed(2)}/5`,
-          key_metric: `${s.survey_count} surveys, composite ${composite.toFixed(2)}`,
-        };
+      if (aiData?.error || !aiData?.content?.[0]?.text) {
+        const why = aiData?.error?.message || "the AI service returned nothing usable";
+        console.error(`[analysis] ${s.server_name}: ${why} — writing the task from the scores instead`);
+        aiFailures.push(`${s.server_name}: ${why}`);
+        parsed = fromScores();
+      } else {
+        try {
+          parsed = JSON.parse(aiData.content[0].text.replace(/```json|```/g, "").trim());
+        } catch {
+          parsed = fromScores();
+        }
+        if (!parsed || !parsed.title) parsed = fromScores();
       }
 
       tasksToInsert.push({
@@ -536,16 +585,51 @@ Respond with ONLY valid JSON (no markdown, no preamble):
     }
 
     let insertedCount = 0;
+    const errors = [];
     if (tasksToInsert.length > 0) {
       const { data: inserted, error: insertError } = await supabase.from("server_tasks").insert(tasksToInsert).select();
       if (insertError) {
+        // This used to be logged and nothing more, so the screen reported the
+        // number of tasks the run *meant* to write and then showed an empty
+        // list. A run that saved nothing is a failed run, and says so.
         console.error("server_tasks insert error:", insertError.message);
+        errors.push(`The tasks could not be saved: ${insertError.message}`);
       } else {
         insertedCount = inserted?.length ?? 0;
       }
     }
+    if (aiFailures.length) {
+      errors.push(
+        `The AI service could not be reached for ${aiFailures.length} of ${tasksToInsert.length} ` +
+        `task${tasksToInsert.length === 1 ? "" : "s"}; ${tasksToInsert.length === 1 ? "it was" : "those were"} ` +
+        `written from the scores instead. (${aiFailures[0]})`
+      );
+    }
 
-    res.json({ period: periodLabel, servers_analyzed: Object.keys(serverMap).length, tasks_generated: tasksToInsert.length, tasks_inserted: insertedCount, results: aiResults });
+    // Why a run can analyse servers and still produce nothing: a task is only
+    // raised for somebody clearly struggling or clearly excelling. Everybody
+    // in between is the normal case, and silence there reads as a broken
+    // button rather than as good news.
+    let note = null;
+    if (!tasksToInsert.length) {
+      note = `Analysed ${Object.keys(serverMap).length} server${Object.keys(serverMap).length === 1 ? "" : "s"} ` +
+        `and found none needing attention: a training task is raised below a composite of 3.0, and recognition ` +
+        `at 4.0 or above with at least 3 surveys. Everyone fell between the two.`;
+    }
+
+    res.json({
+      period: periodLabel,
+      // The month the tasks were filed under. The screen filters by month and
+      // defaults to today, so analysing an earlier period wrote tasks that
+      // were then never asked for.
+      month: monthKey,
+      servers_analyzed: Object.keys(serverMap).length,
+      tasks_generated: tasksToInsert.length,
+      tasks_inserted: insertedCount,
+      results: aiResults,
+      ...(note ? { note } : {}),
+      ...(errors.length ? { errors } : {}),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
