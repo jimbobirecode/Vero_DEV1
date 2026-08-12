@@ -155,6 +155,9 @@ app.use("/api/surveys",      requireAuth, minimumRole("dept_head"),       requir
 app.use("/api/visits",       requireAuth,                                 require("./routes/visits"));
 app.use("/api/events",       requireAuth, minimumRole("dept_head"),       require("./routes/events"));
 app.use("/api/alerts",       requireAuth, minimumRole("dept_head"),       require("./routes/alerts"));
+// Same data as Alerts, read the other way round — who is still owed a good
+// visit. dept_head, because it is the head of department who can arrange one.
+app.use("/api/watchlist",    requireAuth, minimumRole("dept_head"),       require("./routes/watchlist"));
 app.use("/api/training",     requireAuth, minimumRole("dept_head"),       require("./routes/training"));
 app.use("/api/staff",        requireAuth, minimumRole("dept_head"),       require("./routes/staff"));
 app.use("/api/servers",      requireAuth, minimumRole("dept_head"),       require("./routes/servers"));

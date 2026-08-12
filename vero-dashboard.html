@@ -538,6 +538,7 @@
       <div class="nav-item" data-tab="insights">AI Insights</div>
       <div class="nav-item" data-tab="training">Training Actions</div>
       <div class="nav-item" data-tab="alerts">Case Alerts <span class="count crit" id="railAlertCount" style="display:none;"></span></div>
+      <div class="nav-item" data-tab="watchlist">Watchlist <span class="count" id="railWatchCount" style="display:none;"></span></div>
     </div>
 
     <div class="nav-group">
@@ -801,6 +802,42 @@
       </div>
     </section>
 
+    <!-- ================= WATCHLIST =================
+         Case Alerts answers "what did we do about it". This answers "did it
+         work", and only the member can settle that. A case closed on Tuesday
+         records that a manager rang somebody; the member walking back in on
+         Saturday and rating it a nine records that it worked. -->
+    <section class="screen" id="screen-watchlist">
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <h2 style="display:inline;">Did the recovery work?</h2>
+            <button class="info-btn" onclick="showInfo('watchlist')">?</button>
+          </div>
+          <select id="watchWindow" onchange="loadWatchlist()" style="padding:6px 10px;font-size:12px;">
+            <option value="90">Last 90 days</option>
+            <option value="180" selected>Last 6 months</option>
+            <option value="365">Last year</option>
+          </select>
+        </div>
+        <div class="panel-sub">Every member who had a bad visit, and what happened the next time they came in.</div>
+        <div id="watchStrip" class="recovery-strip" style="margin-top:14px;"></div>
+        <div id="watchNote" style="font-size:11px;color:var(--ink-soft);margin-top:10px;"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Still owed a good visit</h2>
+        <div class="panel-sub">Longest wait first. A case marked resolved does not clear anyone from here — only their next visit does.</div>
+        <div id="watchWaiting" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Settled</h2>
+        <div class="panel-sub">They came back and told us how it went. These are the ones the recovery rate is measured on.</div>
+        <div id="watchSettled" style="margin-top:12px;"></div>
+      </div>
+    </section>
+
     <!-- ================= MEMBERS ================= -->
     <section class="screen" id="screen-members">
       <!-- Member health. A member who stops coming rarely resigns first —
@@ -962,7 +999,7 @@
           <div id="vMemberIdWrap">
             <label>Member #</label>
             <div style="position:relative;">
-              <input class="field" id="vMemberId" placeholder="e.g. R272" autocomplete="off" oninput="lookupMember()">
+              <input class="field" id="vMemberId" placeholder="e.g. R272" autocomplete="off" oninput="lookupMember()" onchange="checkWatch()">
               <div id="vMemberDropdown" class="lookup-dropdown"></div>
             </div>
           </div>
@@ -985,6 +1022,10 @@
         </div>
 
         <div id="vLookupNote" style="font-size:11px;color:var(--ink-soft);margin-top:6px;"></div>
+        <!-- The whole point of the watchlist, put where somebody can still act
+             on it. By the time this member's name reaches a report they have
+             been and gone. -->
+        <div id="vWatchNote" style="display:none;margin-top:10px;"></div>
 
         <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px;">
           <span id="visitSaveNote" style="font-size:11px;"></span>
@@ -2478,6 +2519,7 @@
     insights:['AI Insights','Weekly analysis, generated Fridays at 6:02am'],
     training:['Training Actions','Prioritised, evidence-based, tracked to completion'],
     alerts:['Case Alerts','Flagged the day they happen'],
+    watchlist:['Watchlist','Members owed a good visit — and whether they got one'],
     events:['Events','Post-event feedback surveys — create, upload attendees, blast surveys'],
     surveylog:['Survey Log','Every survey sent, pending, and completed'],
     messagelog:['Message Log','Every SMS and email sent by the system'],
@@ -2513,6 +2555,7 @@
     if(tab==='upload'){ loadPosOutletOptions(); loadPosModules(); }
     if(tab==='training') loadTrainingPlans();
     if(tab==='alerts') loadAlerts();
+    if(tab==='watchlist') loadWatchlist();
     if(tab==='insights') loadInsights();
     // Leaving the screen retires the post-payment confirmation, so it does not
     // reappear later in the session as though a second payment had landed.
@@ -2538,8 +2581,8 @@
     // director clicks a screen that answers every request with 403.
     fb: { badge:"F&B Director · Food & Service Only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','members','billing'] },
     ro: { badge:"Department Head · Read-only", showStaff:false, maskNames:true, restrictedTabs:['builder','settings','insights','upload','members','billing'] },
-    sm: { badge:"Shift Manager · Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','golf','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing','reports'] },
-    gsm: { badge:"Golf Shift Manager · Golf Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','upload','insights','training','alerts','members','visits','events','surveylog','messagelog','builder','settings','billing','reports'] }
+    sm: { badge:"Shift Manager · Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','golf','insights','training','alerts','watchlist','members','visits','events','surveylog','messagelog','builder','settings','billing','reports'] },
+    gsm: { badge:"Golf Shift Manager · Golf Upload Only", showStaff:false, maskNames:true, restrictedTabs:['overview','outlets','trends','staff','upload','insights','training','alerts','watchlist','members','visits','events','surveylog','messagelog','builder','settings','billing','reports'] }
   };
 
   document.querySelectorAll('.role-opt').forEach(btn=>{
@@ -2814,6 +2857,96 @@
     steady:   { label: 'Steady',   colour: 'var(--sage)' },
     growing:  { label: 'Growing',  colour: 'var(--sage)' },
   };
+
+  /* ---------- watchlist ---------- */
+  //
+  // The four outcomes, in the order a manager reads them: the two that are
+  // still open at the top, then the verdict either way.
+  const WATCH_STATUS = {
+    not_returned:        { label: 'Not been back',   colour: 'var(--brick)' },
+    returned_unmeasured: { label: 'Came back',       colour: 'var(--amber)' },
+    recovered:           { label: 'Recovered',       colour: 'var(--sage)' },
+    still_unhappy:       { label: 'Still unhappy',   colour: 'var(--brick)' },
+  };
+
+  function watchRow(m){
+    const st = WATCH_STATUS[m.status] || { label: m.status, colour: 'var(--ink-soft)' };
+    const reach = m.opted_out ? 'opted out' : (m.phone || m.email || 'no contact details');
+    // What actually happened, in one line, rather than four columns of dates
+    // the reader has to assemble themselves.
+    let what;
+    if(m.status === 'not_returned')
+      what = 'No visit since';
+    else if(m.status === 'returned_unmeasured')
+      what = `Back after ${m.days_to_return}d — not surveyed`;
+    else
+      what = `Back after ${m.days_to_return}d · ${m.verdict_nps == null ? 'rated' : 'NPS ' + m.verdict_nps}`
+        + (m.nps_change == null ? '' : ` (${m.nps_change > 0 ? '+' : ''}${m.nps_change})`);
+
+    const repeat = m.incident_count > 1
+      ? `<span style="font-size:10px;color:var(--brick);"> · ${m.incident_count} bad visits</span>` : '';
+    const closed = m.incident && m.incident.alert_resolved
+      ? '<span style="font-size:10px;color:var(--ink-soft);"> · case closed</span>' : '';
+
+    return `<div class="parse-row" style="grid-template-columns:1.6fr .9fr 1fr 1.4fr;">
+      <span><b>${esc(m.name || m.member_id)}</b>${repeat}
+        <div style="font-size:10.5px;color:var(--ink-soft);">${esc(reach)}</div></span>
+      <span class="mono" style="font-size:10.5px;color:${st.colour};">${esc(st.label)}</span>
+      <span>${esc(m.days_since_incident)}d ago${closed}
+        <div style="font-size:10.5px;color:var(--ink-soft);">${m.incident && m.incident.nps != null ? 'NPS ' + esc(m.incident.nps) : esc(m.incident ? m.incident.severity || '' : '')}</div></span>
+      <span style="font-size:12px;">${esc(what)}</span>
+    </div>`;
+  }
+
+  async function loadWatchlist(){
+    const days = document.getElementById('watchWindow')?.value || '180';
+    const strip = document.getElementById('watchStrip');
+    const waiting = document.getElementById('watchWaiting');
+    const settled = document.getElementById('watchSettled');
+    const note = document.getElementById('watchNote');
+
+    const res = await apiCall('/watchlist?days=' + encodeURIComponent(days));
+    if(!res || !res.ok){
+      strip.innerHTML = '<div class="stat"><div class="eyebrow">Watchlist</div><div class="note">Not available.</div></div>';
+      waiting.innerHTML = ''; settled.innerHTML = ''; note.textContent = '';
+      return;
+    }
+    const d = await res.json();
+    const s = d.summary || {};
+
+    strip.innerHTML = [
+      { eyebrow: 'Still owed', value: String(s.still_watching ?? 0),
+        note: 'no verdict from them yet' },
+      { eyebrow: 'Recovery rate', value: s.recovery_rate == null ? '—' : s.recovery_rate + '%',
+        note: s.recovery_rate == null ? 'nobody has been back yet' : `of ${s.returned_and_measured} who came back and told us` },
+      { eyebrow: 'Still unhappy', value: String(s.still_unhappy ?? 0),
+        note: 'came back, second visit was bad too' },
+      { eyebrow: 'Lost', value: String(s.lapsed_after_incident ?? 0),
+        note: 'never returned, past the window' },
+    ].map(st => `<div class="stat"><div class="eyebrow">${esc(st.eyebrow)}</div>`
+      + `<div class="value">${esc(st.value)}</div><div class="note">${esc(st.note)}</div></div>`).join('');
+
+    waiting.innerHTML = (d.watching || []).length
+      ? d.watching.map(watchRow).join('')
+      : '<div style="text-align:center;color:var(--sage);padding:16px;font-size:13px;">Nobody is waiting. Every member who had a bad visit has been back and told us how it went.</div>';
+
+    settled.innerHTML = (d.settled || []).length
+      ? d.settled.map(watchRow).join('')
+      : '<div style="text-align:center;color:var(--ink-soft);padding:16px;font-size:13px;">Nothing settled yet in this window.</div>';
+
+    // Say what the rate rests on. A rate over three cases is not a rate, and
+    // showing "67%" without the three is how a club learns to distrust it.
+    const bits = [`${s.incidents ?? 0} incident${s.incidents === 1 ? '' : 's'} across ${s.members ?? 0} member${s.members === 1 ? '' : 's'}`];
+    if(s.returned_and_measured) bits.push(`${s.returned_and_measured} graded`);
+    if(s.median_days_to_return != null) bits.push(`typically back within ${s.median_days_to_return} days`);
+    note.textContent = bits.join(' · ') + '.';
+
+    const rail = document.getElementById('railWatchCount');
+    if(rail){
+      rail.textContent = String(s.still_watching ?? 0);
+      rail.style.display = s.still_watching ? '' : 'none';
+    }
+  }
 
   async function loadMemberHealth(){
     const days = document.getElementById('healthWindow')?.value || '90';
@@ -5217,6 +5350,7 @@
     document.getElementById('vMemberIdWrap').style.display = isMember ? '' : 'none';
     document.getElementById('vGuestNameWrap').style.display = isMember ? 'none' : '';
     document.getElementById('vLookupNote').textContent = '';
+    document.getElementById('vWatchNote').style.display = 'none';
     document.getElementById('vMemberDropdown').classList.remove('open');
     document.getElementById('vGuestDropdown').classList.remove('open');
   }
@@ -5247,6 +5381,44 @@
     document.getElementById('vEmail').value = email || '';
     document.getElementById('vMemberDropdown').classList.remove('open');
     document.getElementById('vLookupNote').innerHTML = '<span style="color:var(--sage);">Loaded: ' + last + ', ' + first + '</span>';
+    checkWatch();
+  }
+
+  // Is there anything about this member somebody should know before they sit
+  // down? Called when a member is picked for a visit, which is the last moment
+  // at which the answer is any use.
+  //
+  // Silent when there is nothing to say. A banner that appears for everybody
+  // is a banner nobody reads.
+  async function checkWatch(){
+    const box = document.getElementById('vWatchNote');
+    if(!box) return;
+    const id = document.getElementById('vMemberId').value.trim();
+    box.style.display = 'none';
+    box.innerHTML = '';
+    if(!id) return;
+
+    const res = await apiCall('/watchlist/' + encodeURIComponent(id));
+    if(!res || !res.ok) return;                       // never block logging a visit
+    const { standing } = await res.json();
+    if(!standing || !standing.on_watch) return;
+
+    const inc = standing.incident || {};
+    const what = inc.nps != null ? 'scored ' + inc.nps + '/10' : 'raised a case alert';
+    const closed = inc.alert_resolved
+      ? ' The case was marked resolved — they have not told us whether it worked.'
+      : ' The case is still open.';
+    const again = standing.incident_count > 1
+      ? ` This has happened ${standing.incident_count} times.` : '';
+
+    box.style.display = '';
+    box.innerHTML = `<div style="background:rgba(156,74,52,0.09);border-left:3px solid var(--brick);border-radius:6px;padding:11px 13px;">
+      <div style="font-size:12px;font-weight:600;color:var(--brick);margin-bottom:3px;">Owed a good visit</div>
+      <div style="font-size:12.5px;line-height:1.5;color:var(--ink);">
+        ${esc(standing.name || id)} ${esc(what)} ${esc(String(standing.days_since_incident))} days ago.${esc(closed)}${esc(again)}
+        ${inc.comment ? `<div style="margin-top:6px;font-style:italic;color:var(--ink-soft);">“${esc(inc.comment)}”</div>` : ''}
+      </div>
+    </div>`;
   }
 
   function lookupGuest(){
@@ -6106,6 +6278,10 @@
     members: {
       title: 'How Members works',
       text: 'Populated by: manual entry or bulk CSV/PDF import from your POS/CRM. Each member needs a member ID, name, and a phone or email. Set their communication preference (SMS or email) and opt-out status. The "Send survey" button sends a one-off survey to that member. PDF imports should contain a table with columns: member_id, first_name, last_name, phone_number, email_address.'
+    },
+    watchlist: {
+      title: 'How the Watchlist works',
+      text: 'Populated by: bad survey responses and the case alerts raised from them, paired with what the member did next. An incident is a response that scored badly enough to raise an alert — the same rule the Case Alerts screen uses, so the two cannot disagree about what a bad visit is. A member then sits here until one of two things happens: they come back and answer another survey, or the watch window runs out. Marking the case resolved does NOT clear them. That records what the club did, not what the member thinks, and "we called and they seemed fine" is exactly the belief this screen exists to test. Four outcomes: waiting (no visit since), came back (visited, but has not been surveyed, so nobody knows), recovered (came back and rated it well), and still unhappy (came back and it was bad again). The recovery rate is measured only on the last two — counting people who have not returned yet would turn it into a measure of how recent the incidents are. A visit within 36 hours of the incident is treated as the same occasion rather than a return, because a member who ate in two outlets on one evening has not come back and nobody could have acted in between. Past the window they stop being a recovery problem and become a retention one, which is what Member health on the Members screen is for.'
     },
     memberhealth: {
       title: 'How Member health works',

@@ -114,6 +114,26 @@ Running out is designed to be recoverable rather than surprising: warnings at tw
 
 Still needed to go live: the per-segment price from Sendly, and a Stripe account with `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` set. Everything else is in place and tested.
 
+## Watchlist — did the recovery actually work? (new)
+
+Service recovery reports how fast the club rang somebody and whether the case was closed. Both describe what the *club* did. Neither is evidence it worked. This tracks the member from the bad visit to their next one and grades the outcome on what they said. Full detail in **`docs/watchlist.md`**; the short version:
+
+**Dashboard → Intelligence → Watchlist.** Everyone still owed a good visit, longest wait first, and the recovery rate underneath. **And a banner on the Visits screen**: pick a member for a visit and, if they are owed one, it says what they scored, how long ago, whether the case was closed, and their own comment. That banner is the part that changes an outcome — by the time a name reaches a monthly report, they have been and gone.
+
+**Closing the case does not clear the member.** This is the one decision everything else follows from. A manager rings, marks the alert resolved, the recovery rate goes up — and all that has actually happened is that the club believes it went well. The member stays on the list until they come back and answer another survey, or the watch window runs out. "We called and they seemed fine" is exactly the belief this exists to test, so it is the one thing that cannot end the watch.
+
+Four outcomes: **not been back**, **came back but was never surveyed** (nobody knows), **recovered**, **still unhappy**. The last two come off the list — the question is settled either way, and a list that keeps answered questions on it stops being read.
+
+Three rules stop the number lying:
+
+- **The rate is measured only on members who came back.** Counting those who have not yet would make it a measure of how *recent* the incidents are — a club with one bad week would watch its rate collapse before anybody had had a chance to return. With nothing graded, the rate is `null` and the screen says "nobody has been back yet", not "0% recovered".
+- **A visit within 36 hours is the same occasion, not a return.** A member who ate in the clubhouse and then the halfway house on one evening has not come back, and grading the club on a visit nobody could have acted on between times scores it for something it did not do.
+- **Every incident is graded, not just the newest.** A member who had a bad visit, came back, and had another is *both* a failed recovery and a fresh open case. The first version graded only their latest incident and reported 100% recovered on a member who plainly had not been.
+
+Past the window they drop off: no longer a recovery problem, now a retention one, which is what Member health on the Members screen is for. Keeping them on both would put one person on two lists with two different recommended actions.
+
+No migration — it reads tables that already exist. `dept_head` and above, matching Case Alerts.
+
 ## Not yet built
 
 - **Authentication.** Nothing in `server/` checks who's calling it yet — `/api/members`, `/api/integrations/save`, etc. are wide open on whatever URL Render gives the service. The cron endpoints are protected by `CRON_SECRET`, but the dashboard's own API calls aren't gated behind a login. This is the actual next step before this touches real member PII or real SMS spend: wire up Supabase Auth, and check the caller's role (GM/F&B Director/Read-only) server-side, not just in the dashboard's UI logic.
