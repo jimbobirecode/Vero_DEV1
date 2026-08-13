@@ -319,7 +319,11 @@ function pdfHeading(doc, text, size = 13) {
   // Keep a heading with at least a couple of rows of what it introduces —
   // a section title alone at the foot of a page is the classic generated-PDF
   // tell, and it makes a board pack look automated in the bad sense.
-  if (doc.y > PAGE.height - PAGE.margin - 90) doc.addPage();
+  // 140pt is a heading, a table header and two or three rows. At the old 90pt
+  // a section could start at the foot of a page with a single row under it and
+  // continue overleaf under a repeated column header, which reads as two
+  // unrelated tables.
+  if (doc.y > PAGE.height - PAGE.margin - 140) doc.addPage();
   doc.moveDown(0.8);
   doc.fillColor("#16302A").fontSize(size).text(text);
   doc.moveDown(0.35);
@@ -330,47 +334,114 @@ function pdfHeading(doc, text, size = 13) {
 
 // A table that measures its columns and paginates, rather than running off the
 // page. Values are already strings from the model.
+// A table whose rows are as tall as their contents.
+//
+// This used to draw every row at a fixed 15pt and ask pdfkit not to wrap. It
+// wraps anyway — heightOfString reports two lines for a long question title
+// whether lineBreak is set or not — so a wrapped cell ran straight through the
+// row beneath it, and the question titles are exactly the cells long enough to
+// do it. Two lines of text in a one-line row is the "text running into each
+// other" a reader sees.
+//
+// So each row is measured before it is drawn: the tallest cell decides the
+// height, the zebra stripe is drawn to that height, and the page break uses it
+// too. Wrapping rather than truncating is deliberate — "Was the background
+// music at a comfortabl…" tells a reader nothing, and a board pack is read for
+// the words as much as the numbers.
+// The small label above a table — "By outlet", "By day of week", the template
+// name in Question detail. Its own function so the gap under it is the same
+// everywhere, and so it cannot be left stranded at the foot of a page above a
+// table that has moved on without it.
+function pdfSubLabel(doc, text) {
+  if (doc.y > PAGE.height - PAGE.margin - 90) doc.addPage();
+  doc.x = PAGE.margin;
+  doc.fillColor("#5B6259").fontSize(9).text(text);
+  doc.moveDown(0.25);
+}
+
 function pdfTable(doc, columns, rows, opts = {}) {
   const usable = PAGE.width - PAGE.margin * 2;
   const totalWeight = columns.reduce((a, c) => a + (c.weight || 1), 0);
   const widths = columns.map((c) => (usable * (c.weight || 1)) / totalWeight);
-  const rowHeight = opts.rowHeight || 15;
+  const PAD_X = 5;          // left and right inside a cell
+  const PAD_Y = 2.5;        // above the first line
+  const MIN_ROW = opts.rowHeight || 15;
+  const FONT = 8.5;
+
+  // A blank body cell reads as "no value here", which is what the em dash is
+  // for. A blank *header* is a column with no name — several tables have one —
+  // and printing "—" there invents a column called em dash.
+  const cellText = (v, head = false) => (v == null || v === "" ? (head ? "" : "—") : String(v));
+
+  // How tall a row has to be to hold its tallest cell. Measured at the same
+  // font size and width the cell is drawn at, or the measurement is fiction.
+  function heightOf(cells) {
+    doc.fontSize(FONT);
+    const tallest = cells.reduce((h, v, i) => Math.max(
+      h, doc.heightOfString(cellText(v), { width: widths[i] - PAD_X * 2 })
+    ), 0);
+    return Math.max(MIN_ROW, Math.ceil(tallest + PAD_Y * 2));
+  }
+
+  function drawRow(cells, y, height, { head = false } = {}) {
+    let x = PAGE.margin;
+    doc.fontSize(FONT).fillColor(head ? "#FFFFFF" : "#20241F");
+    columns.forEach((c, i) => {
+      doc.text(cellText(cells[i], head), x + PAD_X, y + PAD_Y, {
+        width: widths[i] - PAD_X * 2,
+        align: c.align || "left",
+        // Headers stay on one line: a wrapped header makes the band ragged and
+        // they are short enough to fit by design.
+        lineBreak: !head,
+        ellipsis: head,
+      });
+      x += widths[i];
+    });
+    // Put the cursor back at the left margin.
+    //
+    // Every cell is drawn at an explicit x, and pdfkit leaves doc.x wherever
+    // the last one was — which is the right-hand column. The next plain
+    // doc.text() then starts from there with only the remaining width to wrap
+    // into, so every section heading after the first table printed hard against
+    // the right edge, and "Month on month" broke over two lines doing it. It
+    // looked like an alignment choice; it was a cursor nobody put back.
+    doc.x = PAGE.margin;
+  }
+
+  const headCells = columns.map((c) => c.label);
+  const headHeight = Math.max(MIN_ROW, heightOf(headCells));
 
   function header() {
     const y = doc.y;
-    doc.rect(PAGE.margin, y - 2, usable, rowHeight).fill("#16302A");
-    let x = PAGE.margin;
-    doc.fontSize(8.5).fillColor("#FFFFFF");
-    columns.forEach((c, i) => {
-      doc.text(c.label, x + 5, y + 2.5, { width: widths[i] - 10, align: c.align || "left", lineBreak: false });
-      x += widths[i];
-    });
-    doc.y = y + rowHeight + 2;
+    doc.rect(PAGE.margin, y - 2, usable, headHeight).fill("#16302A");
+    drawRow(headCells, y, headHeight, { head: true });
+    doc.y = y + headHeight + 2;
   }
 
+  // Start on a new page rather than showing a column header with one row under
+  // it and the rest overleaf. Two rows is the minimum that reads as a table.
+  const opening = headHeight + rows.slice(0, 2).reduce((h, r) => h + heightOf(r), 0);
+  if (rows.length && doc.y + opening > PAGE.height - PAGE.margin) doc.addPage();
+
   header();
-  doc.fontSize(8.5);
 
   rows.forEach((row, ri) => {
+    const height = heightOf(row);
+
     // Repeat the header on a new page; a continued table with no header is a
-    // grid of unlabelled numbers.
-    if (doc.y > PAGE.height - PAGE.margin - rowHeight * 2) {
+    // grid of unlabelled numbers. Measured against this row's own height, so a
+    // three-line row does not start 12pt from the bottom of the page.
+    if (doc.y + height > PAGE.height - PAGE.margin) {
       doc.addPage();
       header();
-      doc.fontSize(8.5);
     }
+
     const y = doc.y;
-    if (ri % 2 === 1) doc.rect(PAGE.margin, y - 2, usable, rowHeight).fill("#F5F2EA");
-    let x = PAGE.margin;
-    doc.fillColor("#20241F");
-    columns.forEach((c, i) => {
-      const v = row[i];
-      doc.text(v == null || v === "" ? "—" : String(v), x + 5, y + 2.5,
-        { width: widths[i] - 10, align: c.align || "left", lineBreak: false, ellipsis: true });
-      x += widths[i];
-    });
-    doc.y = y + rowHeight;
+    if (ri % 2 === 1) doc.rect(PAGE.margin, y - 2, usable, height).fill("#F5F2EA");
+    drawRow(row, y, height);
+    doc.y = y + height;
   });
+
   doc.moveDown(0.5);
 }
 
@@ -465,7 +536,7 @@ function toPdf(model, stream) {
       { label: "Rate", weight: 1, align: "right" }];
     const rrRows = (list) => list.map((r) => [r.label, r.sent, r.responded, r.sent - r.responded,
       r.rate == null ? "—" : r.rate + "%"]);
-    const rrSub = (t) => doc.fillColor("#5B6259").fontSize(9).text(t);
+    const rrSub = (t) => pdfSubLabel(doc, t);
 
     pdfTable(doc, rrCols, rrRows([{ label: "All surveys", sent: rr.sent, responded: rr.responded, rate: rr.rate }]));
     if (rr.by_outlet.length) { rrSub("By outlet"); pdfTable(doc, rrCols, rrRows(rr.by_outlet)); }
@@ -492,12 +563,12 @@ function toPdf(model, stream) {
       { label: "Food", weight: 0.9, align: "right" }, { label: "Service", weight: 1, align: "right" }];
     const rows = (list) => list.map((r) => [r.label, r.responses, r.nps ?? "—", r.csat ?? "—", r.food ?? "—", r.service ?? "—"]);
 
-    doc.fillColor("#5B6259").fontSize(9).text("By visitor type");
+    pdfSubLabel(doc, "By visitor type");
     pdfTable(doc, cols, rows(model.segments.visitor_type));
-    doc.fillColor("#5B6259").fontSize(9).text("By day of week");
+    pdfSubLabel(doc, "By day of week");
     pdfTable(doc, cols, rows(model.segments.weekday));
     if (model.segments.daypart_available) {
-      doc.fillColor("#5B6259").fontSize(9).text("By service");
+      pdfSubLabel(doc, "By service");
       pdfTable(doc, cols, rows(model.segments.daypart));
     } else {
       doc.fillColor("#5B6259").fontSize(8.5)
@@ -511,8 +582,7 @@ function toPdf(model, stream) {
   if (model.questions && model.questions.length) {
     pdfHeading(doc, "Question detail");
     model.questions.forEach((tpl) => {
-      doc.fillColor("#5B6259").fontSize(9)
-        .text(`${tpl.template} — ${tpl.responses} response${tpl.responses === 1 ? "" : "s"}`);
+      pdfSubLabel(doc, `${tpl.template} — ${tpl.responses} response${tpl.responses === 1 ? "" : "s"}`);
       pdfTable(doc,
         [{ label: "Question", weight: 3.4 }, { label: "Answered", weight: 1, align: "right" },
          { label: "Average", weight: 1, align: "right" }, { label: "Out of 100", weight: 1.1, align: "right" },
