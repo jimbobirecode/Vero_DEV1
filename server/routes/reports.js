@@ -77,7 +77,7 @@ async function gather(range) {
 
   // In parallel: none of these depends on another, and a report that takes
   // four sequential round trips to Supabase is a report nobody waits for.
-  const [scores, previousScores, leaderboard, alerts, creditData, surveys, responses, templates, events, previousResponses] = await Promise.all([
+  const [scores, previousScores, leaderboard, alerts, creditData, surveys, responses, templates, events, previousResponses, sentSurveys] = await Promise.all([
     scoresHandler ? fetchJson(scoresHandler, { start: range.from.slice(0, 10), end: range.to.slice(0, 10) }) : null,
     scoresHandler ? fetchJson(scoresHandler, { start: previous.from.slice(0, 10), end: previous.to.slice(0, 10) }) : null,
     gatherLeaderboard(range),
@@ -88,9 +88,10 @@ async function gather(range) {
     gatherTemplates(),
     gatherEvents(range),
     gatherResponses(previous),
+    gatherSentSurveys(range),
   ]);
 
-  return { scores, previousScores, leaderboard, alerts, credit: creditData, surveys, responses, templates, events, previousResponses };
+  return { scores, previousScores, leaderboard, alerts, credit: creditData, surveys, responses, templates, events, previousResponses, sentSurveys };
 }
 
 // The period's responses, once, for every granular cut.
@@ -132,6 +133,38 @@ async function gatherResponses(range) {
     }
   }
   return [];
+}
+
+// Every survey SENT in the period, answered or not.
+//
+// This is the denominator, and it is a different set from the responses above:
+// those are what came back, filtered by when the member answered. A rate needs
+// both halves of the same cohort, so this asks by created_at — the moment the
+// survey was made and sent — and takes the submission time along with it,
+// whenever it happens to have arrived.
+//
+// A left join to visits on purpose. gatherResponses uses visits!inner because
+// an event response has no visit and would distort the outlet scoring; here it
+// must not be dropped, because it was still a survey somebody was sent and a
+// denominator that quietly excludes a whole survey type is worse than one
+// that reports it as having no outlet.
+async function gatherSentSurveys(range) {
+  try {
+    const { data, error } = await supabase
+      .from("survey_responses")
+      .select("response_id, template_id, created_at, submitted_at, visits(visit_date, visitor_type, outlets(name))")
+      .gte("created_at", range.from)
+      .lt("created_at", range.to)
+      .limit(100000);
+    if (error) {
+      console.error("[reports] sent surveys:", error.message);
+      return [];
+    }
+    return data || [];
+  } catch (e) {
+    console.error("[reports] sent surveys:", String(e));
+    return [];
+  }
 }
 
 async function gatherTemplates() {

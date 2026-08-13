@@ -498,6 +498,8 @@ window.VERO_HELP = {
             "Read the headline figures, each with its change against the previous period of the same length.",
             "Club indices gives CHI, SSI and OHI for the period.",
             "Month on month charts NPS across the period; By outlet gives response volume per room.",
+            "Response rate shows how many of the surveys sent came back, split by room, by week, by survey and by type of member — a club-wide 45% is often one room at 35% and another at 67%, which are two different problems.",
+            "A survey belongs to the period it was sent in and counts as answered whenever the answer arrived, so a Friday send answered on Monday is a success rather than a miss. Sends from the last day or so are flagged as still settling, with the rate excluding them given alongside.",
             "The tables underneath rank servers and summarise case alerts raised, resolved and still open by severity.",
             "Check the figures on screen, then export: Excel for further analysis, PDF for a fixed management report.",
             "Anything with no data in the period is named under the period line rather than shown as a zero."

@@ -47,6 +47,16 @@ function zebra(sheet, from) {
   }
 }
 
+// The one caveat both renderings carry. Said the same way in each, because a
+// spreadsheet and a PDF hedging differently about the same number is how a
+// reader decides neither can be trusted.
+function rrSettlingNote(rr) {
+  const answered = rr.settling.responded;
+  return `${rr.settling.sent} of these were sent in the last ${rr.settling.hours} hours and have had `
+    + `little time to be answered${answered ? ` (${answered} already have)` : ""}. `
+    + `Excluding them, the rate is ${rr.settling.settled_rate == null ? "—" : rr.settling.settled_rate + "%"}.`;
+}
+
 async function toExcel(model, stream) {
   const ExcelJS = require("exceljs");
   // The streaming writer: rows are flushed as they are added rather than held.
@@ -152,6 +162,47 @@ async function toExcel(model, stream) {
       ]).commit());
     });
     op.commit();
+  }
+
+  // --- Response rate
+  //
+  // The one section built from the surveys that were SENT rather than from the
+  // ones that came back — see lib/response-rate.js for why the two sets are
+  // not interchangeable.
+  if (model.response_rate && model.response_rate.sent) {
+    const rr = model.response_rate;
+    const w = wb.addWorksheet("Response rate");
+    w.columns = [{ width: 26 }, { width: 10 }, { width: 12 }, { width: 12 }, { width: 10 }];
+
+    const rrBlock = (heading, list) => {
+      if (!list || !list.length) return;
+      w.addRow([heading]).font = { bold: true, size: 11, color: { argb: FOREST } };
+      const h = w.addRow(["", "Sent", "Answered", "No answer", "Rate"]);
+      h.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+      h.fill = { type: "pattern", pattern: "solid", fgColor: { argb: FOREST } };
+      list.forEach((r) => w.addRow([
+        r.label, r.sent, r.responded, r.sent - r.responded, r.rate == null ? "—" : r.rate + "%",
+      ]));
+      w.addRow([]);
+    };
+
+    rrBlock("The club", [{ label: "All surveys", sent: rr.sent, responded: rr.responded, rate: rr.rate }]);
+    rrBlock("By outlet", rr.by_outlet);
+    rrBlock("By period", rr.by_period);
+    rrBlock("By survey", rr.by_template);
+    rrBlock("By type of member", rr.by_visitor_type);
+
+    if (rr.speed && rr.speed.answers) {
+      w.addRow(["How quickly they answer"]).font = { bold: true, size: 11, color: { argb: FOREST } };
+      w.addRow(["Typical time to answer", `${rr.speed.median_hours} hours`]);
+      w.addRow(["Answered the same day", `${rr.speed.same_day_pct}%`]);
+      w.addRow(["Answered within two days", `${rr.speed.within_48h_pct}%`]);
+      w.addRow([]);
+    }
+    if (rr.settling && rr.settling.sent) {
+      w.addRow([rrSettlingNote(rr)]).font = { italic: true, size: 9, color: { argb: SOFT } };
+    }
+    w.commit();
   }
 
   // --- Segments
@@ -404,6 +455,34 @@ function toPdf(model, stream) {
        { label: "NPS", weight: 0.8, align: "right" }, { label: "Promoters", weight: 1, align: "right" },
        { label: "Detractors", weight: 1, align: "right" }, { label: "CSAT", weight: 0.9, align: "right" }],
       model.periods.map((r) => [r.label, r.responses, r.nps ?? "—", r.promoters, r.detractors, r.csat ?? "—"]));
+  }
+
+  if (model.response_rate && model.response_rate.sent) {
+    const rr = model.response_rate;
+    pdfHeading(doc, "Response rate");
+    const rrCols = [{ label: "", weight: 2 }, { label: "Sent", weight: 1, align: "right" },
+      { label: "Answered", weight: 1, align: "right" }, { label: "No answer", weight: 1, align: "right" },
+      { label: "Rate", weight: 1, align: "right" }];
+    const rrRows = (list) => list.map((r) => [r.label, r.sent, r.responded, r.sent - r.responded,
+      r.rate == null ? "—" : r.rate + "%"]);
+    const rrSub = (t) => doc.fillColor("#5B6259").fontSize(9).text(t);
+
+    pdfTable(doc, rrCols, rrRows([{ label: "All surveys", sent: rr.sent, responded: rr.responded, rate: rr.rate }]));
+    if (rr.by_outlet.length) { rrSub("By outlet"); pdfTable(doc, rrCols, rrRows(rr.by_outlet)); }
+    if (rr.by_period.length) { rrSub("By period"); pdfTable(doc, rrCols, rrRows(rr.by_period)); }
+    if (rr.by_template.length) { rrSub("By survey"); pdfTable(doc, rrCols, rrRows(rr.by_template)); }
+    if (rr.by_visitor_type.length) { rrSub("By type of member"); pdfTable(doc, rrCols, rrRows(rr.by_visitor_type)); }
+
+    if (rr.speed && rr.speed.answers) {
+      doc.fillColor("#5B6259").fontSize(8.5).text(
+        `Typically answered within ${rr.speed.median_hours} hours — ${rr.speed.same_day_pct}% the same day, `
+        + `${rr.speed.within_48h_pct}% within two days.`);
+      doc.moveDown(0.3);
+    }
+    if (rr.settling && rr.settling.sent) {
+      doc.fillColor("#5B6259").fontSize(8.5).text(rrSettlingNote(rr));
+      doc.moveDown(0.4);
+    }
   }
 
   if (model.segments && model.segments.visitor_type.length) {

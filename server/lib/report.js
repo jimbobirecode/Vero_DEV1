@@ -25,6 +25,7 @@ const INDEX_LABELS = {
 };
 
 const detail = require("./report-detail");
+const responseRates = require("./response-rate");
 
 function round(n, dp = 1) {
   if (n == null || !isFinite(n)) return null;
@@ -85,6 +86,7 @@ function build({
   alerts = null,          // /api/alerts/severity-stats
   credit = null,          // { balance_cents, currency, usage: [...] }
   surveys = null,         // { sent, responded }
+  sentSurveys = [],       // the period's sends, answered or not, for the rate cuts
   responses = [],         // the period's raw responses, for the granular cuts
   previousResponses = [], // the same for the preceding period, for the deltas
   templates = [],         // survey templates, so every question can be reported
@@ -111,6 +113,15 @@ function build({
   if (prev.nps == null && rowsPrev.length) prev.nps = derivedPrev.nps;
   if (prev.csat == null && rowsPrev.length) prev.csat = derivedPrev.csat;
 
+  // Who was asked and who answered, by room, by week, by survey and by type of
+  // member. Built from the sends themselves rather than from a pair of counts,
+  // because a rate is only worth reading once you can see which part of the
+  // club it came from.
+  const sends = Array.isArray(sentSurveys) ? sentSurveys : [];
+  const rates = sends.length
+    ? responseRates.build(sends, { templates, granularity, now: generatedAt ? Date.parse(generatedAt) : Date.now() })
+    : null;
+
   // Headline figures, each with its change against the preceding period of the
   // same length — a number with no comparison is a number nobody can act on.
   const headline = [
@@ -119,7 +130,10 @@ function build({
     { key: "responses", label: "Responses", value: scores?.response_count ?? 0, previous: previousScores?.response_count ?? null, format: "count" },
     {
       key: "response_rate", label: "Response rate",
-      value: surveys ? responseRate(surveys.responded, surveys.sent) : null,
+      // From the same rows as the table below it. Reading the headline from a
+      // count query and the breakdown from the rows is how a report ends up
+      // disagreeing with itself two panels apart.
+      value: rates ? rates.rate : (surveys ? responseRate(surveys.responded, surveys.sent) : null),
       previous: null, format: "percent",
     },
   ].map((h) => ({ ...h, delta: delta(h.value, h.previous, h.format === "rating" ? 2 : h.format === "number" ? 0 : 1) }));
@@ -231,6 +245,7 @@ function build({
     outlet_periods,
     segments,
     questions,
+    response_rate: rates,
     events: events ? {
       nps: round(events.nps, 0),
       csat: round(events.csat, 2),
@@ -259,6 +274,7 @@ function build({
       !periods.length && "periods",
       !questions.length && "questions",
       !segments.visitor_type.length && "segments",
+      !rates && "response_rate",
       !eventRows.length && "events",
       !segments.daypart_available && "daypart",
       !credit && "credit",
@@ -283,6 +299,9 @@ function sections(model) {
     out.push({ key: "periods", title: g });
   }
   if (model.outlet_periods && model.outlet_periods.length) out.push({ key: "outlet_periods", title: "Outlet trends" });
+  if (model.response_rate && model.response_rate.sent) {
+    out.push({ key: "response_rate", title: "Response rate" });
+  }
   if (model.segments && model.segments.visitor_type.length) out.push({ key: "segments", title: "Segments" });
   if (model.questions && model.questions.length) out.push({ key: "questions", title: "Question detail" });
   if (model.events && model.events.list.length) out.push({ key: "events", title: "Events" });

@@ -110,7 +110,7 @@ check("and it says which sections are absent",
   // The granular sections say so too, including daypart — which is absent
   // because no visit carries a clock time, not because nobody ate at lunch.
   ["alerts", "credit", "daypart", "events", "outlets", "periods", "questions",
-   "segments", "servers", "trend"]);
+   "response_rate", "segments", "servers", "trend"]);
 check("no indices when nothing feeds them", bare.indices.length, 0);
 
 check("sections list only what has data", R.sections(bare).map((s) => s.key), ["summary"]);

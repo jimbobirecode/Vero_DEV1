@@ -1405,6 +1405,13 @@
         <div style="overflow-x:auto;"><table class="data-table" id="reportOutletTrends"></table></div>
       </div>
 
+      <div class="panel" style="margin-top:16px;" id="reportRatePanel">
+        <h2>Response rate</h2>
+        <div class="panel-sub">Of the surveys sent in this period, how many came back — by room, by week, by survey and by type of member. A survey belongs to the period it was <i>sent</i> in and counts as answered whenever the answer arrived, so a Friday send answered on Monday is a success rather than a miss.</div>
+        <div style="overflow-x:auto;"><table class="data-table" id="reportRate"></table></div>
+        <div id="reportRateNote" style="font-size:11px;color:var(--ink-soft);margin-top:8px;"></div>
+      </div>
+
       <div class="panel" style="margin-top:16px;" id="reportSegmentPanel">
         <h2>Segments</h2>
         <div class="panel-sub" id="reportSegmentNote">Who the member was, and when they came in.</div>
@@ -7250,6 +7257,44 @@
     });
     renderReportTable('reportOutletTrends', 'reportOutletTrendPanel',
       ['Outlet','Period','Responses','NPS','CSAT','Food','Service'], trendRows);
+
+    // Response rate: the club, then the same figure cut four ways. One table
+    // with heading rows rather than four panels — they are the same number
+    // asked about different slices, and separating them invites reading one
+    // without the total beside it.
+    const rr = d.response_rate;
+    const rateRows = [];
+    if(rr && rr.sent){
+      const push = (heading, list)=>{
+        if(!list || !list.length) return;
+        rateRows.push([{ heading }, '', '', '']);
+        list.forEach(r=> rateRows.push([r.label, r.sent, r.responded, r.rate == null ? '—' : r.rate + '%']));
+      };
+      rateRows.push(['All surveys', rr.sent, rr.responded, rr.rate == null ? '—' : rr.rate + '%']);
+      push('By outlet', rr.by_outlet);
+      push('By period', rr.by_period);
+      push('By survey', rr.by_template);
+      push('By type of member', rr.by_visitor_type);
+    }
+    renderReportTable('reportRate', 'reportRatePanel',
+      ['', 'Sent', 'Answered', 'Rate'], rateRows);
+
+    const rateNote = document.getElementById('reportRateNote');
+    if(rateNote){
+      const bits = [];
+      if(rr && rr.speed && rr.speed.answers){
+        bits.push(`Typically answered within ${rr.speed.median_hours} hours — `
+          + `${rr.speed.same_day_pct}% the same day, ${rr.speed.within_48h_pct}% within two days.`);
+      }
+      // Said rather than smoothed away: the newest sends have had less time to
+      // be answered, and without this a club reads its own tail as a decline.
+      if(rr && rr.settling && rr.settling.sent){
+        bits.push(`${rr.settling.sent} were sent in the last ${rr.settling.hours} hours and have had little `
+          + `time to be answered. Excluding them, the rate is `
+          + `${rr.settling.settled_rate == null ? '—' : rr.settling.settled_rate + '%'}.`);
+      }
+      rateNote.textContent = bits.join(' ');
+    }
 
     // Segments, three groupings in one table with a heading row between them.
     const seg = d.segments || {};

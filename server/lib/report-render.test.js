@@ -57,6 +57,19 @@ const model = report.build({
       { key: "q6", title: "Was the music too loud?", type: "stars", index: null },
     ],
   }],
+  // What was sent, answered or not — the denominator. Deliberately a different
+  // set from `responses` above: two of these never came back, and one was
+  // answered four days after it was sent.
+  sentSurveys: [
+    { response_id: "a", created_at: "2026-08-03T09:00:00Z", submitted_at: "2026-08-03T12:00:00Z",
+      template_id: "t1", visits: { visit_date: "2026-08-03", visitor_type: "member", outlets: { name: "Grill" } } },
+    { response_id: "b", created_at: "2026-08-04T09:00:00Z", submitted_at: null,
+      template_id: "t1", visits: { visit_date: "2026-08-04", visitor_type: "member", outlets: { name: "Grill" } } },
+    { response_id: "c", created_at: "2026-08-05T09:00:00Z", submitted_at: "2026-08-09T09:00:00Z",
+      template_id: "t1", visits: { visit_date: "2026-08-05", visitor_type: "commercial", outlets: { name: "Poolside" } } },
+    { response_id: "d", created_at: "2026-08-11T09:00:00Z", submitted_at: null,
+      template_id: "t1", visits: { visit_date: "2026-08-11", visitor_type: "member", outlets: { name: "Poolside" } } },
+  ],
   events: {
     nps: 50, csat: 4.4, responses: 12,
     events: [{ name: "Member-Guest", event_date: "2026-08-08", category: "golf", responses: 12, nps: 50, csat: 4.4 }],
@@ -87,9 +100,27 @@ const model = report.build({
     JSON.stringify(model.questions[0]?.questions.map((q) => q.key)));
   check("events appear, which they never did before", model.events.list.length === 1);
 
+  console.log("\n--- the response rate, which is a different question ---");
+  check("half the surveys sent came back", model.response_rate.rate === 50,
+    JSON.stringify({ sent: model.response_rate.sent, responded: model.response_rate.responded }));
+  check("the headline agrees with the table under it",
+    model.headline.find((h) => h.key === "response_rate").value === model.response_rate.rate,
+    JSON.stringify(model.headline.find((h) => h.key === "response_rate")));
+  check("it is split by room", model.response_rate.by_outlet.length === 2,
+    JSON.stringify(model.response_rate.by_outlet.map((o) => o.label)));
+  check("every send is accounted for in the split",
+    model.response_rate.by_outlet.reduce((n, o) => n + o.sent, 0) === model.response_rate.sent);
+  // The rule the whole section rests on: this one was sent in the first week
+  // and answered in the second, and it belongs to the week it was sent.
+  check("a survey answered days later still counts for the week it was sent",
+    model.response_rate.by_period[0].responded === 2,
+    JSON.stringify(model.response_rate.by_period));
+  check("and how long an answer typically takes is reported",
+    model.response_rate.speed.median_hours != null, JSON.stringify(model.response_rate.speed));
+
   console.log("\n--- the sections list names them ---");
   const keys = report.sections(model).map((s) => s.key);
-  for (const k of ["nps_breakdown", "periods", "outlet_periods", "segments", "questions", "events"]) {
+  for (const k of ["nps_breakdown", "periods", "outlet_periods", "response_rate", "segments", "questions", "events"]) {
     check(`"${k}" is offered as a section`, keys.includes(k), keys.join(", "));
   }
 
@@ -106,7 +137,7 @@ const model = report.build({
     const back = new ExcelJS.Workbook();
     await back.xlsx.load(xlsx);
     const names = back.worksheets.map((w) => w.name);
-    for (const sheet of ["NPS composition", "Week by week", "Outlet trends", "Segments", "Question detail", "Events"]) {
+    for (const sheet of ["NPS composition", "Week by week", "Outlet trends", "Response rate", "Segments", "Question detail", "Events"]) {
       check(`the "${sheet}" sheet exists`, names.includes(sheet), names.join(", "));
     }
 
@@ -116,6 +147,15 @@ const model = report.build({
       text.includes("Was the music too loud?"), text.slice(0, 300));
     check("and is labelled as not benchmarked rather than left blank",
       text.includes("Not benchmarked"), text.slice(0, 300));
+
+    const rr = back.getWorksheet("Response rate");
+    const rrText = rr.getSheetValues().flat().filter((v) => typeof v === "string").join(" | ");
+    check("the spreadsheet splits the rate by outlet",
+      rrText.includes("By outlet") && rrText.includes("Grill"), rrText.slice(0, 300));
+    check("and by survey and member type",
+      rrText.includes("By survey") && rrText.includes("By type of member"), rrText.slice(0, 400));
+    check("and says how quickly answers come in",
+      rrText.includes("Typical time to answer"), rrText.slice(0, 500));
 
     const seg = back.getWorksheet("Segments");
     const segText = seg.getSheetValues().flat().filter((v) => typeof v === "string").join(" | ");
