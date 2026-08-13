@@ -757,7 +757,19 @@
             <button class="info-btn" onclick="showInfo('training')">?</button>
           </div>
         </div>
-        <div class="panel-sub">Generated weekly by AI from guest feedback. Priority-tagged, tracked to completion.</div>
+        <div class="panel-sub">Generated weekly by AI from guest feedback. Priority-tagged, assigned to a person, tracked to completion.</div>
+        <!-- A plan nobody owns is the one that sits at 0/4 for a month, so it
+             gets its own filter rather than being something you notice by
+             reading every card. -->
+        <div class="filter-tabs" id="trainingFilters" style="margin-top:12px;">
+          <div class="filter-tab active" onclick="filterTraining('', this)">All plans</div>
+          <div class="filter-tab" onclick="filterTraining('unassigned', this)">Unassigned</div>
+          <div class="filter-tab" onclick="filterTraining('mine', this)">Mine</div>
+        </div>
+        <!-- Outside the list, because assigning a plan reloads the list and
+             under the "unassigned" filter the card it was written on is the
+             one that just disappeared. -->
+        <div id="trainingStatus" style="font-size:11.5px;margin-bottom:10px;"></div>
         <div id="trainingPlansContainer"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
           <span style="font-size:11px;color:var(--ink-soft);" id="trainingCount"></span>
@@ -2553,7 +2565,9 @@
     if(tab==='events') loadEventList();
     if(tab==='members'){ loadMembersFromApi(); loadMemberHealth(); }
     if(tab==='upload'){ loadPosOutletOptions(); loadPosModules(); }
-    if(tab==='training') loadTrainingPlans();
+    // The staff list first: the assign dropdown on each plan is filled from
+    // it, and an empty one offers nobody.
+    if(tab==='training') loadStaffCache().then(loadTrainingPlans);
     if(tab==='alerts') loadAlerts();
     if(tab==='watchlist') loadWatchlist();
     if(tab==='insights') loadInsights();
@@ -3442,10 +3456,54 @@
 
   /* ---------- training plans (dynamic) ---------- */
   let trainingOffset = 0;
+  let trainingFilter = '';          // '' | 'unassigned' | 'mine'
 
   function trainingPage(dir){
     trainingOffset = Math.max(0, trainingOffset + dir * 5);
     loadTrainingPlans();
+  }
+
+  function filterTraining(which, btn){
+    document.querySelectorAll('#trainingFilters .filter-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    trainingFilter = which;
+    const status = document.getElementById('trainingStatus');
+    if(status) status.innerHTML = '';
+    // Page 4 of "all" is not page 4 of "unassigned"; staying on it shows an
+    // empty screen for a filter that has plenty in it.
+    trainingOffset = 0;
+    loadTrainingPlans();
+  }
+
+  // Hand a plan to somebody, or take it back.
+  //
+  // The server emails them, so this is not a silent change of state on a
+  // screen they may never open.
+  async function assignTrainingPlan(planId, sel){
+    const staffId = sel.value;
+    const status = document.getElementById('trainingStatus');
+    const say = (html) => { if(status) status.innerHTML = html; };
+    sel.disabled = true;
+    say('<span style="color:var(--ink-soft);">Saving…</span>');
+
+    const res = await apiCall('/training/' + planId + '/owner', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ staff_id: staffId || null })
+    });
+    sel.disabled = false;
+
+    if(!res || !res.ok){
+      const err = res ? await res.json().catch(()=>({})) : {};
+      say(`<span style="color:var(--brick);">${esc(err.error) || 'Could not save.'}</span>`);
+      return;
+    }
+    const d = await res.json();
+    // The list is redrawn first, then the confirmation written over the top of
+    // it — the other way round and the reload wipes what was just said.
+    await loadTrainingPlans();
+    say(d.owner_name
+      ? `<span style="color:var(--sage);">Assigned to ${esc(d.owner_name)} — they have been emailed.</span>`
+      : '<span style="color:var(--ink-soft);">Handed back. Nobody is responsible for that plan now.</span>');
   }
 
   /* ---------- AI insights ---------- */
@@ -3511,10 +3569,22 @@
   }
 
   async function loadTrainingPlans(){
-    const res = await apiCall('/training?limit=5&offset=' + trainingOffset);
     const container = document.getElementById('trainingPlansContainer');
+    // "Mine" is answered by whoever is signed in, so it needs their staff row
+    // rather than a server-side notion of the current user.
+    const owner = trainingFilter === 'mine'
+      ? (_currentUser && _currentUser.staff_id) || 'unassigned'
+      : trainingFilter;
+    const res = await apiCall('/training?limit=5&offset=' + trainingOffset
+      + (owner ? '&owner=' + encodeURIComponent(owner) : ''));
     if(!res){
       container.innerHTML = '<div style="text-align:center;color:var(--ink-soft);padding:20px;">No backend connected.</div>';
+      return;
+    }
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      container.innerHTML = `<div style="text-align:center;color:var(--brick);padding:20px;">${esc(err.error) || 'Could not load training plans.'}</div>`;
+      document.getElementById('trainingCount').textContent = '';
       return;
     }
     const data = await res.json();
@@ -3524,7 +3594,12 @@
     document.getElementById('trainingNext').style.display = (trainingOffset + 5 < (data.total || 0)) ? '' : 'none';
 
     if(!plans.length){
-      container.innerHTML = '<div style="text-align:center;color:var(--ink-soft);padding:20px;">No training plans yet. Plans are generated weekly by the AI analysis cron job based on guest feedback.</div>';
+      const emptyText = trainingFilter === 'unassigned'
+        ? 'Every plan has somebody against it.'
+        : trainingFilter === 'mine'
+          ? 'Nothing is assigned to you.'
+          : 'No training plans yet. Plans are generated weekly by the AI analysis from guest feedback.';
+      container.innerHTML = `<div style="text-align:center;color:var(--ink-soft);padding:20px;">${esc(emptyText)}</div>`;
       return;
     }
 
@@ -3543,6 +3618,29 @@
         </div>`;
       }).join('');
 
+      // Who is doing this. An unowned plan says so in the same place, in the
+      // colour that means "unfinished business", because the alternative —
+      // absence of a name — reads as nothing at all.
+      //
+      // owner_name outlives owner_staff_id on purpose: removing somebody from
+      // the team nulls the id and leaves the name, so the plan can say who it
+      // used to belong to instead of quietly becoming unassigned.
+      let ownerChip;
+      if(plan.owner_staff_id){
+        ownerChip = `<span style="color:var(--sage);">${esc(plan.owner_name || (plan.staff||{}).name || 'Assigned')}</span>`;
+      } else if(plan.owner_name){
+        ownerChip = `<span style="color:var(--brick);">${esc(plan.owner_name)} has left — reassign</span>`;
+      } else {
+        ownerChip = '<span style="color:var(--brick);">Nobody yet</span>';
+      }
+
+      const assignHtml = data.assignable === false ? '' : `
+        <select class="train-assign" data-owner="${jsAttr(plan.owner_staff_id || '')}"
+                onchange="assignTrainingPlan('${plan.plan_id}', this)"
+                style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;">
+          <option value="">${plan.owner_staff_id ? 'Hand back' : 'Assign to…'}</option>
+        </select>`;
+
       return `<div class="plan">
         <div class="plan-head">
           <span class="outlet">${outlet}</span>
@@ -3550,11 +3648,26 @@
         </div>
         ${plan.basis_summary ? '<div class="context">' + plan.basis_summary + '</div>' : ''}
         ${stepsHtml}
-        <div class="plan-actions">
-          <button class="btn-mini" style="background:var(--brick);" onclick="deleteTrainingPlan('${plan.plan_id}')">Remove plan</button>
+        <div class="plan-actions" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:11.5px;color:var(--ink-soft);">Responsible: ${ownerChip}</span>
+          ${assignHtml}
+          <button class="btn-mini" style="background:var(--brick);margin-left:auto;" onclick="deleteTrainingPlan('${plan.plan_id}')">Remove plan</button>
         </div>
       </div>`;
     }).join('');
+
+    // Same source as the alert dropdowns, so a name reads identically wherever
+    // it appears. The person already on the plan is left out of their own list.
+    container.querySelectorAll('.train-assign').forEach(sel => {
+      staffCache.forEach(s => {
+        if(s.staff_id === sel.dataset.owner) return;
+        const opt = document.createElement('option');
+        opt.value = s.staff_id;
+        const roleLabel = s.role ? (ROLE_LABELS[s.role] || String(s.role).replace(/_/g, ' ')) : '';
+        opt.textContent = roleLabel ? `${s.name} (${roleLabel})` : s.name;
+        sel.appendChild(opt);
+      });
+    });
   }
 
   async function toggleTrainingStep(planId, stepIdx, checked){
@@ -6317,7 +6430,7 @@
     },
     training: {
       title: 'How Training Actions works',
-      text: 'Runs automatically every Friday morning, at 7:00am Eastern (6:00am while the clocks are back). It reads the week\'s survey scores and comments for each outlet and writes one plan per outlet, with the steps ordered Immediate / This week / Ongoing. Check steps off as they are done — a plan is never overwritten, so last week\'s stays readable alongside this week\'s. An outlet with no responses that week gets no plan rather than an empty one. You do not need to trigger it; the "Generate analysis" button on Server Performance is a different thing — it looks at one server\'s recent scores on demand, rather than the whole outlet\'s week.'
+      text: 'Runs automatically every Friday morning, at 7:00am Eastern (6:00am while the clocks are back). It reads the week\'s survey scores and comments for each outlet and writes one plan per outlet, with the steps ordered Immediate / This week / Ongoing. Check steps off as they are done — a plan is never overwritten, so last week\'s stays readable alongside this week\'s. An outlet with no responses that week gets no plan rather than an empty one. Every plan carries a responsible person: an outlet that nominates an owner for its case alerts has its plans assigned to them on generation, and anything else arrives marked "Nobody yet" until somebody is chosen from the dropdown. Assigning emails that person the outstanding steps, so being made responsible is not something they find out about the next time they happen to open the dashboard. The Unassigned filter is the one worth reading on a Friday — a plan belonging to nobody is the one everybody assumes somebody else is working, and it is how a plan sits at 0 of 4 for a month. You do not need to trigger the analysis; the "Generate analysis" button on Server Performance is a different thing — it looks at one server\'s recent scores on demand, rather than the whole outlet\'s week.'
     },
     alerts: {
       title: 'How Case Alerts works',

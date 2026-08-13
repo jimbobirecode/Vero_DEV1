@@ -35,6 +35,10 @@ const ACTIONS = {
   // someone's inbox and is out of our control from there, so who took one and
   // for what period belongs in the same trail as who read the member list.
   REPORT_EXPORTED: "report_exported",
+  // Who was made responsible for a training plan, and by whom. "Nobody told me
+  // it was mine" is the argument this settles, and the plan itself only ever
+  // shows the current owner.
+  TRAINING_ASSIGNED: "training_assigned",
 };
 
 function clientIp(req) {

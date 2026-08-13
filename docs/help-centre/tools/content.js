@@ -243,11 +243,14 @@ module.exports = {
           steps: [
             'Each plan names its outlet and says what it was built from — for example 38 responses, 9 of them mentioning the gap between courses.',
             'Steps are tagged Immediate, This week or Ongoing.',
+            'Every plan names who is responsible for it. Choose a name from the dropdown and that person is emailed the outstanding steps straight away.',
+            'An outlet that already nominates an owner for its case alerts has its plans assigned to them automatically. Anything else arrives marked Nobody yet.',
+            'The Unassigned filter shows the plans nobody has picked up; Mine shows your own.',
             'Tick a step as the team completes it. The count in the plan header updates.',
             'Plans are written by the weekly analysis. An outlet with no responses that week gets no plan rather than an empty one.',
             'Remove plan clears a plan that has been overtaken or completed in full.',
           ],
-          practice: 'Four steps that get done beat twelve that do not. If a plan is not going to be worked, remove it rather than leaving it open.',
+          practice: 'Four steps that get done beat twelve that do not. Check the Unassigned filter on a Friday: a plan belonging to nobody is the one everybody assumes somebody else is working.',
         },
         {
           n: '13',

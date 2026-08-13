@@ -100,16 +100,35 @@ async function performWeeklyAnalysis() {
       response_count: responses.length,
     }).then(() => {}, () => {});  // ignore if table doesn't exist yet
 
-    const { data: plan } = await supabase
-      .from("training_plans")
-      .insert({
-        outlet_id: outlet.outlet_id,
-        week_start: weekStart,
-        steps: parsed.training_action?.steps ?? [],
-        basis_summary: `${parsed.headline ?? ""} · Based on ${responses.length} responses this week`,
-      })
-      .select()
-      .single();
+    const row = {
+      outlet_id: outlet.outlet_id,
+      week_start: weekStart,
+      steps: parsed.training_action?.steps ?? [],
+      basis_summary: `${parsed.headline ?? ""} · Based on ${responses.length} responses this week`,
+    };
+
+    // An outlet that already nominates somebody for its case alerts has said
+    // who answers for it. A plan generated at 6am on a Friday and owned by
+    // nobody is read by everybody as somebody else's job, so it starts with
+    // that name on it rather than waiting for a manager to notice and pick
+    // one. They can hand it to someone else on the screen.
+    if (outlet.owner_staff_id) {
+      row.owner_staff_id = outlet.owner_staff_id;
+      row.assigned_at = new Date().toISOString();
+      const { data: owner } = await supabase
+        .from("staff").select("name").eq("staff_id", outlet.owner_staff_id).maybeSingle();
+      if (owner) row.owner_name = owner.name;
+    }
+
+    let { data: plan, error: planErr } = await supabase
+      .from("training_plans").insert(row).select().single();
+
+    // Before migrations/training-owner.sql the columns do not exist. The plan
+    // matters more than the ownership, so it is written without it.
+    if (planErr && String(planErr.message || "").includes("owner")) {
+      delete row.owner_staff_id; delete row.owner_name; delete row.assigned_at;
+      ({ data: plan } = await supabase.from("training_plans").insert(row).select().single());
+    }
 
     created.push({ outlet: outlet.name, urgency: parsed.urgency, plan_id: plan?.plan_id });
   }
