@@ -3335,7 +3335,15 @@
       explained_only:'Explained, nothing to change', no_action:'No action taken' },
     goodwill_types: { none:'Nothing', comped_item:'Comped an item', comped_visit:'Comped the visit',
       account_credit:'Credited their account', gift:'Gift or gesture', other:'Something else' },
-    reasons: {},
+    // Closing a case nobody was contacted about asks why, and the answer is a
+    // closed list so it can be counted. This was left empty, which rendered an
+    // options-less dropdown that could not be answered and a Close button that
+    // refused to save. Kept in step with NO_CONTACT_REASONS in lib/recovery.js.
+    reasons: { member_declined:'Member asked not to be contacted',
+      already_handled:'Already handled in person at the time',
+      not_member_specific:"Not about a specific member's experience",
+      no_contact_details:'No phone or email on file',
+      duplicate:'Duplicate of another alert' },
   };
 
   function fillSelect(id, options, placeholder){
@@ -3362,7 +3370,12 @@
     document.getElementById('noContactGroup').style.display = needsReason ? '' : 'none';
     if(needsReason){
       document.getElementById('resolveWho').textContent = memberName || 'the member';
-      fillSelect('resolveNoContact', Object.keys(m.reasons || {}).length ? m.reasons : RESOLVE_FALLBACK.reasons, 'Pick one…');
+      // The recovery queue hands back the server's own list; prefer it, then
+      // whatever the queue last cached, then the built-in list above.
+      const reasons = Object.keys(m.reasons || {}).length ? m.reasons
+        : (Object.keys(recoveryMeta.no_contact_reasons || {}).length
+            ? recoveryMeta.no_contact_reasons : RESOLVE_FALLBACK.reasons);
+      fillSelect('resolveNoContact', reasons, 'Pick one…');
     }
 
     document.getElementById('resolveSub').textContent = needsReason
